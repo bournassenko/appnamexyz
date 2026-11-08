@@ -14,8 +14,9 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from app.analyzers.engines import analyze
 from app.config import settings
 from app.exporters.render import exporters, render_svg, validate_layout
+from app.exporters.tactile import TactileValidationError, prepare_document
 from app.refinement import apply_plan, plan_edit
-from app.schemas import ElementUpdate, ProjectConfig, RefineRequest, Representation, Source
+from app.schemas import ElementUpdate, OutputSettings, ProjectConfig, RefineRequest, Representation, Source
 from app.storage.local import storage
 
 logger = logging.getLogger("application")
@@ -97,6 +98,11 @@ async def validation_error(request: Request, exc: RequestValidationError):
     return JSONResponse({"error": {"message": "Invalid request. Check file, identifier, and configuration values.", "status": 422}}, status_code=422)
 
 
+@app.exception_handler(TactileValidationError)
+async def tactile_error(request: Request, exc: TactileValidationError):
+    return JSONResponse({"error": {"message": str(exc), "status": 422}, "validation": exc.report}, status_code=422)
+
+
 @app.get("/api/v1/health")
 def health():
     return {"status": "ok", "version": "1.0", "release": settings.release_tag}
@@ -136,7 +142,7 @@ def list_engines():
 
 @app.get("/api/v1/profiles")
 def profiles():
-    return [{"id": "digital", "name": "Digital preview", "validated_hardware": False}, {"id": "print", "name": "Printable document", "validated_hardware": False}, {"id": "swell", "name": "Swell paper oriented", "validated_hardware": False}]
+    return [{"id": "bana2022", "name": "BANA 2022 preparation", "validated_hardware": False}, {"id": "digital", "name": "Digital preview", "validated_hardware": False}, {"id": "print", "name": "Printable document", "validated_hardware": False}, {"id": "swell", "name": "Swell paper oriented", "validated_hardware": False}]
 
 
 @app.get("/api/v1/formats")
@@ -218,8 +224,8 @@ async def run_job(job_id: str, project_id: str, kind: str, instruction: str = ""
                     return
                 rep = apply_plan(rep, plan)
             job.update(progress=85, stage="Validating representation and rendering")
-            rep.warnings = list(dict.fromkeys(rep.warnings + validate_layout(rep)))
-            render_svg(rep)
+            rep.warnings = list(dict.fromkeys(rep.warnings + await asyncio.to_thread(validate_layout, rep)))
+            await asyncio.to_thread(render_svg, rep)
             save_revision(project_id, rep)
             job.update(status="completed", progress=100, stage="Ready for review", message=message)
     except Exception as exc:
@@ -282,8 +288,34 @@ def get_representation(project_id: str):
 
 
 @app.get("/api/v1/projects/{project_id}/preview")
-def preview(project_id: str):
-    return Response(render_svg(representation(project_id)), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+def preview(project_id: str, page: int | None = None):
+    try:
+        svg = render_svg(representation(project_id), page)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+    return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/projects/{project_id}/validation")
+def get_validation(project_id: str):
+    rep = representation(project_id)
+    if rep.export_settings.profile != "bana2022":
+        return {"status": "not_applicable", "automated_checks_passed": False, "certified": False, "issues": [], "manual_checks": [], "pages": [], "map_page_index": 0}
+    return prepare_document(rep).report
+
+
+@app.patch("/api/v1/projects/{project_id}/output")
+def update_output(project_id: str, output: OutputSettings):
+    if project_id in active_projects:
+        raise HTTPException(409, "Wait for processing before changing the output layout.")
+    rep = representation(project_id)
+    rep.export_settings = output
+    rep.modifications.append(f"Changed output profile to {output.profile}.")
+    save_revision(project_id, rep)
+    meta = project(project_id)
+    meta["config"]["output"] = output.model_dump()
+    storage.write(project_id, "project.json", meta)
+    return rep
 
 
 @app.patch("/api/v1/projects/{project_id}/elements/{element_id}")
@@ -314,6 +346,7 @@ def history(project_id: str, direction: str):
     rep = storage.read(project_id, f"revision-{index}.json")
     storage.write(project_id, "representation.json", rep)
     meta["revision"] = index
+    meta["config"]["output"] = rep["export_settings"]
     storage.write(project_id, "project.json", meta)
     return rep
 
@@ -324,11 +357,19 @@ async def generate_export(project_id: str, format_id: str):
     exporter = exporters.get(format_id)
     if exporter is None:
         raise HTTPException(404, "Unsupported export format.")
-    async with semaphore:
-        data = await asyncio.to_thread(exporter.render, rep)
+    try:
+        async with semaphore:
+            data = await asyncio.to_thread(exporter.render, rep)
+    except TactileValidationError:
+        raise
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+    if representation(project_id).model_dump() != rep.model_dump():
+        raise HTTPException(409, "The map changed during export. Generate the file again.")
     path = storage.project_path(project_id) / f"export.{exporter.extension}"
     path.write_bytes(data)
-    return {"url": f"/api/v1/projects/{project_id}/downloads/{format_id}", "size": len(data), "mime_type": exporter.mime_type, "warnings": validate_layout(rep)}
+    warnings = await asyncio.to_thread(validate_layout, rep)
+    return {"url": f"/api/v1/projects/{project_id}/downloads/{format_id}", "size": len(data), "mime_type": exporter.mime_type, "filename": f"accessible-map.{exporter.extension}", "warnings": warnings, "map_page_only": rep.export_settings.profile == "bana2022" and format_id in ("svg", "png")}
 
 
 @app.get("/api/v1/projects/{project_id}/downloads/{format_id}")
@@ -347,4 +388,4 @@ def download(project_id: str, format_id: str):
 def diagnostics(project_id: str):
     meta = project(project_id)
     rep = representation(project_id)
-    return {"processing": status(), "revision": meta["revision"], "latest_revision": meta["latest_revision"], "processing_metadata": rep.processing_metadata, "warnings": rep.warnings, "modifications": rep.modifications, "representation": rep, "ai_usage": "Token usage and costs are not estimated in this build."}
+    return {"processing": status(), "revision": meta["revision"], "latest_revision": meta["latest_revision"], "processing_metadata": rep.processing_metadata, "warnings": rep.warnings, "modifications": rep.modifications, "representation": rep, "ai_usage": "Token usage and costs are not estimated in this build.", "validation": get_validation(project_id)}

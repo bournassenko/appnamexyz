@@ -58,6 +58,7 @@ def test_complete_map_workflow_and_actual_exports(client):
     project_id = project["id"]
     config = project["config"]
     config["engine"] = "opencv"
+    config["output"]["profile"] = "digital"
     assert client.patch(f"/api/v1/projects/{project_id}/configuration", json=config).status_code == 200
     job = client.post(f"/api/v1/projects/{project_id}/analyze").json()
     wait(client, project_id, job["id"])
@@ -96,6 +97,30 @@ def test_upload_validation_and_project_isolation(client):
     assert client.post("/api/v1/projects", files={"file": ("bad.png", b"not an image", "image/png")}).status_code == 422
     assert client.get("/api/v1/projects/not-a-project").status_code == 404
     assert client.get("/api/v1/engines").json()[1]["available"] is False
+
+
+def test_bana_output_updates_validation_and_export_gate_without_ai(client):
+    import app.main as module
+    from test_tactile import map_representation
+    uploaded = client.post("/api/v1/projects", files={"file": ("map.png", image_bytes(), "image/png")}).json()
+    project_id = uploaded["id"]
+    rep = map_representation()
+    rep.project_id = project_id
+    module.save_revision(project_id, rep)
+    assert client.get(f"/api/v1/projects/{project_id}/validation").json()["automated_checks_passed"]
+    result = client.post(f"/api/v1/projects/{project_id}/exports/bundle")
+    assert result.status_code == 200, result.text
+    assert client.get(result.json()["url"]).status_code == 200
+    output = rep.export_settings.model_dump()
+    output["legend"] = False
+    assert client.patch(f"/api/v1/projects/{project_id}/output", json=output).status_code == 200
+    assert client.get(result.json()["url"]).status_code == 404
+    blocked = client.post(f"/api/v1/projects/{project_id}/exports/pdf")
+    assert blocked.status_code == 422
+    assert blocked.json()["validation"]["status"] == "blocked"
+    assert client.get(f"/api/v1/projects/{project_id}/preview").status_code == 200
+    assert client.post(f"/api/v1/projects/{project_id}/history/undo").status_code == 200
+    assert client.get(f"/api/v1/projects/{project_id}/validation").json()["automated_checks_passed"]
 
 
 def test_switch_is_written_to_persistent_state(client, tmp_path):
@@ -160,7 +185,7 @@ def test_hybrid_reads_independent_images(client):
 def test_exported_labels_remain_visible_in_png_and_pdf():
     from app.exporters.render import exporters
     from app.schemas import OutputSettings
-    rep = Representation(project_id="label-test", source=Source(filename="labels.png", width=500, height=400, mime_type="image/png"), elements=[Element(id="label", category="labels", geometry=Geometry(type="point", coordinates=[[0.2, 0.25]]), label="Readable Town", confidence=1, provenance="test")], export_settings=OutputSettings(legend=False, label_size=22))
+    rep = Representation(project_id="label-test", source=Source(filename="labels.png", width=500, height=400, mime_type="image/png"), elements=[Element(id="label", category="labels", geometry=Geometry(type="point", coordinates=[[0.2, 0.25]]), label="Readable Town", confidence=1, provenance="test")], export_settings=OutputSettings(profile="digital", legend=False, label_size=22))
     png = exporters["png"].render(rep)
     with Image.open(BytesIO(png)).convert("L") as image:
         label_region = image.crop((400, 345, 800, 455))

@@ -47,9 +47,9 @@ class Element(BaseModel):
 
 
 class OutputSettings(BaseModel):
-    profile: Literal["digital", "print", "swell"] = "digital"
-    page_width_mm: float = Field(default=210, ge=100, le=420)
-    page_height_mm: float = Field(default=297, ge=100, le=420)
+    profile: Literal["digital", "print", "swell", "bana2022"] = "bana2022"
+    page_width_mm: float = Field(default=292.1, ge=100, le=420)
+    page_height_mm: float = Field(default=279.4, ge=100, le=420)
     line_width: float = Field(default=1.2, ge=0.3, le=5)
     label_size: float = Field(default=14, ge=8, le=40)
     symbol_size: float = Field(default=5, ge=2, le=20)
@@ -57,6 +57,8 @@ class OutputSettings(BaseModel):
     legend: bool = True
     texture: Literal["none", "dots", "diagonal"] = "none"
     contrast: Literal["standard", "high"] = "high"
+    tactile_title: str = Field(default="Map", min_length=1, max_length=120)
+    braille_table: Literal["en-ueb-g1.ctb", "en-ueb-g2.ctb"] = "en-ueb-g1.ctb"
 
 
 class ProjectConfig(BaseModel):

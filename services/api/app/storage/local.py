@@ -30,6 +30,9 @@ class LocalTemporaryStorageProvider:
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(value))
         temporary.replace(path)
+        if name == "representation.json":
+            for generated in path.parent.glob("export.*"):
+                generated.unlink(missing_ok=True)
 
     def cleanup(self, active: set[str] | None = None) -> int:
         removed = 0

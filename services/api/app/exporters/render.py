@@ -1,5 +1,10 @@
 from dataclasses import dataclass
 from html import escape
+from io import BytesIO
+import json
+import zipfile
+from pypdf import PdfReader, PdfWriter
+from app.exporters.tactile import TactileValidationError, prepare_document
 import cairosvg
 from app.schemas import Representation
 
@@ -14,6 +19,34 @@ class Exporter:
     hardware: str = "No device-specific compatibility validated"
 
     def render(self, representation: Representation) -> bytes:
+        if representation.export_settings.profile == "bana2022":
+            document = prepare_document(representation)
+            if not document.report["automated_checks_passed"]:
+                raise TactileValidationError(document.report)
+            svg = document.pages[document.map_index].svg.encode()
+            if self.id == "svg":
+                return svg
+            if self.id == "png":
+                return cairosvg.svg2png(bytestring=svg, output_width=1800)
+            writer = PdfWriter()
+            for page in document.pages:
+                rendered = cairosvg.svg2pdf(bytestring=page.svg.encode())
+                writer.add_page(PdfReader(BytesIO(rendered)).pages[0])
+            buffer = BytesIO()
+            writer.write(buffer)
+            pdf = buffer.getvalue()
+            if self.id == "pdf":
+                return pdf
+            archive = BytesIO()
+            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+                for index, page in enumerate(document.pages):
+                    bundle.writestr(f"{index + 1:02d}-{page.role}.svg", page.svg)
+                bundle.writestr("tactile-map.pdf", pdf)
+                bundle.writestr("validation.json", json.dumps(document.report, indent=2))
+                bundle.writestr("print-instructions.txt", document.report["print_instructions"])
+            return archive.getvalue()
+        if self.id == "bundle":
+            raise ValueError("The production bundle requires the BANA 2022 output profile.")
         svg = render_svg(representation).encode()
         if self.id == "svg":
             return svg
@@ -22,10 +55,16 @@ class Exporter:
         return cairosvg.svg2png(bytestring=svg, output_width=1800)
 
 
-exporters = {e.id: e for e in [Exporter("svg", "Editable SVG", "image/svg+xml", "svg", ("vector", "text", "tactile-oriented")), Exporter("pdf", "Print PDF", "application/pdf", "pdf", ("vector", "print")), Exporter("png", "PNG image", "image/png", "png", ("raster", "preview"))]}
+exporters = {e.id: e for e in [Exporter("bundle", "BANA production bundle", "application/zip", "zip", ("vector", "braille", "validation-report", "all-pages")), Exporter("svg", "Editable SVG", "image/svg+xml", "svg", ("vector", "text", "tactile-oriented")), Exporter("pdf", "Print PDF", "application/pdf", "pdf", ("vector", "print")), Exporter("png", "PNG image", "image/png", "png", ("raster", "preview"))]}
 
 
-def render_svg(rep: Representation) -> str:
+def render_svg(rep: Representation, page: int | None = None) -> str:
+    if rep.export_settings.profile == "bana2022":
+        document = prepare_document(rep)
+        selected = document.map_index if page is None else page
+        if not 0 <= selected < len(document.pages):
+            raise ValueError("Preview page does not exist.")
+        return document.pages[selected].svg
     output = rep.export_settings
     width, height = output.page_width_mm, output.page_height_mm
     canvas_width = 900
@@ -84,6 +123,9 @@ def render_svg(rep: Representation) -> str:
 
 
 def validate_layout(rep: Representation) -> list[str]:
+    if rep.export_settings.profile == "bana2022":
+        report = prepare_document(rep).report
+        return list(dict.fromkeys(issue["message"] for issue in report["issues"])) + ["BANA 2022 automated checks do not replace qualified braille proofreading and a physical tactile proof."]
     warnings = []
     points = [(e, e.geometry.coordinates[0]) for e in rep.elements if e.visible]
     for index, (element, p) in enumerate(points):

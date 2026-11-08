@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install -y --no-install-recommends libcairo2 libglib2.0-0 tesseract-ocr tesseract-ocr-fra tesseract-ocr-spa tesseract-ocr-deu && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libcairo2 libglib2.0-0 liblouis-bin liblouis-data tesseract-ocr tesseract-ocr-fra tesseract-ocr-spa tesseract-ocr-deu && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./

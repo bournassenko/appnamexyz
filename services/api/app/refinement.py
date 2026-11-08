@@ -31,6 +31,8 @@ def deterministic_plan(instruction: str) -> EditPlan | None:
 async def plan_edit(instruction: str, representation: Representation) -> EditPlan:
     plan = deterministic_plan(instruction)
     if plan:
+        if representation.export_settings.profile == "bana2022" and any(operation.action in ("label_size", "line_width") for operation in plan.operations):
+            return EditPlan(message="The BANA profile keeps braille at its physical reading size and uses a fixed tactile stroke. Enlarge the page or use a digital profile for scalable print labels.", clarification=True)
         return plan
     if not settings.openai_api_key:
         return EditPlan(message="OpenAI refinement is not configured. You can use commands such as ‘Remove the rivers’, ‘Show roads’, ‘Simplify the map’, or ‘Make labels larger’, or edit individual elements below.", clarification=True)
@@ -66,6 +68,8 @@ def apply_plan(representation: Representation, plan: EditPlan) -> Representation
                     points = np.array(element.geometry.coordinates, dtype=np.float32)
                     element.geometry.coordinates = cv2.approxPolyDP(points, epsilon, element.geometry.type == "polygon").reshape(-1, 2).tolist()
         elif operation.action in ("label_size", "line_width"):
+            if result.export_settings.profile == "bana2022":
+                raise ValueError("The BANA profile fixes braille size and tactile stroke width. Change the page dimensions or select a digital profile.")
             setattr(result.export_settings, operation.action, operation.value)
         elif operation.action == "spacing":
             result.export_settings.minimum_spacing_mm = operation.value

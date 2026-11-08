@@ -1,4 +1,4 @@
-export interface Preferences { theme: string; textSize: number; reducedMotion: boolean; developer: boolean; mode: string; engine: string; profile: string }
-export const defaults: Preferences = { theme: 'system', textSize: 100, reducedMotion: false, developer: false, mode: 'easy', engine: 'auto', profile: 'digital' };
-export function loadPreferences(): Preferences { try { return { ...defaults, ...JSON.parse(localStorage.getItem('preferences') || '{}') }; } catch { return { ...defaults }; } }
+export interface Preferences { theme: string; textSize: number; reducedMotion: boolean; developer: boolean; mode: string; engine: string; profile: string; profileVersion: number }
+export const defaults: Preferences = { theme: 'system', textSize: 100, reducedMotion: false, developer: false, mode: 'easy', engine: 'auto', profile: 'bana2022', profileVersion: 2 };
+export function loadPreferences(): Preferences { try { const stored = JSON.parse(localStorage.getItem('preferences') || '{}'); return { ...defaults, ...stored, profile: stored.profileVersion === 2 ? stored.profile : 'bana2022', profileVersion: 2 }; } catch { return { ...defaults }; } }
 export function savePreferences(value: Preferences): void { localStorage.setItem('preferences', JSON.stringify(value)); }

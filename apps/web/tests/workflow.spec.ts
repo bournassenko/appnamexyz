@@ -31,12 +31,17 @@ test('upload, analyze, refine, undo, and download a map', async ({ page }) => {
   await expect(page.getByText('Your map is ready to analyze.')).toBeVisible();
   await page.getByRole('button', { name: 'Analyze & generate' }).click();
   await expect(page.getByRole('heading', { name: 'Refine', exact: true })).toBeVisible({ timeout: 190000 });
+  await expect(page.getByRole('heading', { name: 'BANA 2022 checks' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Output profile', exact: true })).toHaveValue('bana2022');
+  await page.getByRole('combobox', { name: 'Output profile', exact: true }).selectOption('digital');
+  await page.getByRole('button', { name: 'Apply output settings', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'BANA 2022 checks' })).not.toBeVisible();
   await page.getByRole('button', { name: 'Make labels larger', exact: true }).click();
   await expect(page.getByText('Increased label size.').first()).toBeVisible();
   await page.getByRole('button', { name: 'Undo last revision' }).click();
   await expect(page.getByRole('button', { name: 'Redo revision' })).toBeEnabled();
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'SVG', exact: true }).click();
+  await page.getByRole('button', { name: /^SVG(?: map)?$/ }).click();
   expect((await download).suggestedFilename()).toBe('accessible-map.svg');
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   expect(results.violations).toEqual([]);
