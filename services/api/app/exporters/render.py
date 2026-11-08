@@ -4,6 +4,7 @@ from io import BytesIO
 import json
 import zipfile
 from pypdf import PdfReader, PdfWriter
+from PIL import Image
 from app.exporters.tactile import TactileValidationError, prepare_document
 import cairosvg
 from app.schemas import Representation
@@ -27,7 +28,12 @@ class Exporter:
             if self.id == "svg":
                 return svg
             if self.id == "png":
-                return cairosvg.svg2png(bytestring=svg, output_width=1800)
+                raster = cairosvg.svg2png(bytestring=svg, output_width=1800)
+                with Image.open(BytesIO(raster)) as image:
+                    resolution = image.width * 25.4 / representation.export_settings.page_width_mm
+                    buffer = BytesIO()
+                    image.save(buffer, format="PNG", dpi=(resolution, resolution))
+                    return buffer.getvalue()
             writer = PdfWriter()
             for page in document.pages:
                 rendered = cairosvg.svg2pdf(bytestring=page.svg.encode())

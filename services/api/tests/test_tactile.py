@@ -60,6 +60,7 @@ def test_physical_layout_and_actual_multipage_files():
     with Image.open(BytesIO(exporters["png"].render(rep))) as image:
         assert image.format == "PNG"
         assert image.width == 1800
+        assert image.width / image.info["dpi"][0] * 25.4 == pytest.approx(292.1, abs=0.05)
     with ZipFile(BytesIO(exporters["bundle"].render(rep))) as archive:
         report = json.loads(archive.read("validation.json"))
         assert len([name for name in archive.namelist() if name.endswith(".svg")]) == len(report["pages"])
