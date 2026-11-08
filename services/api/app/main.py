@@ -18,6 +18,7 @@ from app.exporters.tactile import TactileValidationError, prepare_document
 from app.refinement import apply_plan, plan_edit
 from app.schemas import ElementUpdate, OutputSettings, ProjectConfig, RefineRequest, Representation, Source
 from app.storage.local import storage
+from app.production.api import ProductionManager
 
 logger = logging.getLogger("application")
 Image.MAX_IMAGE_PIXELS = 24_000_000
@@ -63,7 +64,7 @@ def save_revision(project_id: str, rep: Representation) -> None:
 
 async def cleanup_loop() -> None:
     while True:
-        storage.cleanup(active_projects)
+        storage.cleanup(active_projects | production.active_projects)
         for key in list(jobs):
             if time.time() - jobs[key]["created_at"] > settings.session_hours * 3600 and jobs[key]["status"] in ("completed", "failed"):
                 del jobs[key]
@@ -85,6 +86,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Accessible materials API", version="1.0", lifespan=lifespan)
+production = ProductionManager(lambda: storage, representation, semaphore, tasks)
+app.include_router(production.router)
 app.add_middleware(CORSMiddleware, allow_origins=[o for o in settings.allowed_origins.split(",") if o], allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type"])
 
 
@@ -152,7 +155,7 @@ def formats():
 
 @app.post("/api/v1/projects", status_code=201)
 async def upload(file: UploadFile = File(...)):
-    storage.cleanup(active_projects)
+    storage.cleanup(active_projects | production.active_projects)
     if len([p for p in settings.storage_path.iterdir() if p.is_dir()]) >= settings.max_projects:
         raise HTTPException(503, "Temporary storage is full. Try again after existing sessions expire.")
     if file.size is not None and file.size > settings.max_upload_mb * 1024 * 1024:

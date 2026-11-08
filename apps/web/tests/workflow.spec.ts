@@ -116,3 +116,56 @@ test('mobile accessibility preferences persist and preserve BANA defaults', asyn
   await page.getByRole('button', { name: 'Open application settings' }).click();
   await expect(page.getByRole('combobox', { name: 'Default output profile', exact: true })).toHaveValue('bana2022');
 });
+
+test('3D production previews and exports preserve the finished map', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Advanced Mode', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Recognition engine', exact: true }).selectOption('opencv');
+  await page.getByLabel('Upload a map image').setInputFiles('tests/map.png');
+  await expect(page.getByText('Your map is ready to analyze.')).toBeVisible();
+  await page.getByRole('button', { name: 'Analyze & generate', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Refine', exact: true })).toBeVisible({ timeout: 30000 });
+  const image = page.locator('.preview-side img').last();
+  const original = await image.getAttribute('src');
+  const before = await (await page.request.get(original!)).text();
+  await page.getByRole('button', { name: '3D preview & production', exact: true }).click();
+  await expect(page.getByText(/braille dots ·/)).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.stage canvas')).toBeVisible();
+  await page.getByRole('button', { name: 'Rotate model left', exact: true }).click();
+  await page.locator('.stage canvas').focus();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Home');
+  await page.getByRole('button', { name: '3D printing', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Generate STL', exact: true })).toBeVisible({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Generate STL', exact: true }).click();
+  const link = page.getByRole('link', { name: 'Download generated file', exact: true });
+  await expect(link).toBeVisible({ timeout: 60000 });
+  const stl = await page.request.get((await link.getAttribute('href'))!);
+  const bytes = await stl.body();
+  expect(stl.status()).toBe(200);
+  expect(bytes.length).toBe(84 + bytes.readUInt32LE(80) * 50);
+  await page.getByRole('button', { name: 'Embosser', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Generate BRF key (text only)', exact: true })).toBeVisible({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Generate BRF key (text only)', exact: true }).click();
+  await expect(link).toBeVisible({ timeout: 30000 });
+  const brf = await (await page.request.get((await link.getAttribute('href'))!)).text();
+  expect(brf).toContain('#A');
+  expect(await (await page.request.get(original!)).text()).toBe(before);
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
+  expect(results.violations).toEqual([]);
+  await page.setViewportSize({ width: 375, height: 667 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.locator('.stage').screenshot({ path: test.info().outputPath('production-preview.png') });
+  await page.getByRole('button', { name: 'Close 3D preview', exact: true }).click();
+  await expect(page.locator('.stage canvas')).toHaveCount(0);
+  await page.evaluate(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, ...args: Parameters<typeof original>) {
+      if (String(args[0]).startsWith('webgl')) return null;
+      return original.apply(this, args);
+    } as typeof original;
+  });
+  await page.getByRole('button', { name: '3D preview & production', exact: true }).click();
+  await expect(page.getByText(/3D preview needs WebGL 2/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate BRF key (text only)', exact: true })).toBeEnabled();
+});
