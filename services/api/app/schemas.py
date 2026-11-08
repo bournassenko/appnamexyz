@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Category = Literal["borders", "rivers", "roads", "regions", "cities", "labels", "landmarks", "other"]
 
@@ -58,11 +58,21 @@ class OutputSettings(BaseModel):
     texture: Literal["none", "dots", "diagonal"] = "none"
     contrast: Literal["standard", "high"] = "high"
     tactile_title: str = Field(default="Map", min_length=1, max_length=120)
-    braille_table: Literal["en-ueb-g1.ctb", "en-ueb-g2.ctb"] = "en-ueb-g1.ctb"
+    braille_table: Literal["en-ueb-g2.ctb"] = "en-ueb-g2.ctb"
     label_mode: Literal["auto", "numbered", "full"] = "auto"
     split_crowded_maps: bool = True
-    max_map_views: int = Field(default=16, ge=1, le=32)
+    max_map_views: int = Field(default=6, ge=1, le=6)
     key_position: Literal["below", "before"] = "below"
+
+    @field_validator("braille_table", mode="before")
+    @classmethod
+    def migrate_braille_table(cls, value: str) -> str:
+        return "en-ueb-g2.ctb" if value == "en-ueb-g1.ctb" else value
+
+    @field_validator("max_map_views", mode="before")
+    @classmethod
+    def cap_map_views(cls, value: int) -> int:
+        return min(value, 6) if isinstance(value, int) else value
 
 
 class ProjectConfig(BaseModel):

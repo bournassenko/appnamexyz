@@ -29,6 +29,21 @@ def crowded_representation():
     return rep
 
 
+def test_existing_projects_migrate_to_contracted_braille_and_six_views():
+    from app.schemas import OutputSettings
+    settings = OutputSettings.model_validate({"braille_table": "en-ueb-g1.ctb", "max_map_views": 32})
+    assert settings.braille_table == "en-ueb-g2.ctb"
+    assert settings.max_map_views == 6
+    rep = map_representation()
+    rep.export_settings = settings
+    rep.elements[1].label = "the"
+    document = prepare_document(rep)
+    root = ET.fromstring(document.pages[document.map_index].svg)
+    label = root.find(".//{http://www.w3.org/2000/svg}g[@aria-label='the']")
+    assert label.attrib["data-braille-table"] == "en-ueb-g2.ctb"
+    assert label.attrib["data-braille"] == "⠮"
+
+
 def test_crowded_maps_expand_to_complete_views_with_full_names():
     rep = crowded_representation()
     original = rep.model_dump_json()
