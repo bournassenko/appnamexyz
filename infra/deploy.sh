@@ -5,6 +5,10 @@ export APP_ENV_FILE="${APP_ENV_FILE:-/opt/accessibility/config/application.env}"
 set -a
 source "$APP_ENV_FILE"
 set +a
+if [ "${APP_NAME:-}" = appnamexyz ]; then
+    sed -i "s/^APP_NAME=.*/APP_NAME='Bringing Roadmaps to Life'/" "$APP_ENV_FILE"
+    export APP_NAME='Bringing Roadmaps to Life'
+fi
 export RELEASE_TAG="${RELEASE_TAG:-$(git -C "$release_dir" rev-parse --short HEAD 2>/dev/null || date +%s)}"
 export CADDY_CONFIG_DIR=/opt/accessibility/caddy
 mkdir -p "$CADDY_CONFIG_DIR"

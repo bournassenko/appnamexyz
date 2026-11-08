@@ -148,7 +148,7 @@
   async function copyDiagnostics() { try { await navigator.clipboard.writeText(diagnosticsData); notice = 'Diagnostics copied.'; } catch { error = 'Clipboard unavailable. Select and copy the JSON below.'; } }
 </script>
 
-<svelte:head><title>{brand.name} — Map conversion</title><meta name="description" content={brand.description} /><link rel="icon" href={brand.favicon} /></svelte:head>
+<svelte:head><title>{brand.name}</title><meta name="description" content={brand.description} /><link rel="icon" href={brand.favicon} /></svelte:head>
 
 <a class="skip-link" href="#main">Skip to main content</a>
 <header class="topbar">

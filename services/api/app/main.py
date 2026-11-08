@@ -110,7 +110,7 @@ def health():
 
 @app.get("/api/v1/branding")
 def branding():
-    return {"name": settings.app_name, "tagline": settings.app_tagline, "description": settings.app_description, "themeColor": settings.theme_color, "publicUrl": settings.public_url, "logo": "/logo.svg", "favicon": "/logo.svg", "defaultAccessibility": {"theme": "system", "textSize": 100, "reducedMotion": False}, "features": {"persistentStorage": False, "formats": list(exporters)}}
+    return {"name": settings.app_name, "tagline": settings.app_tagline, "description": settings.app_description, "themeColor": settings.theme_color, "publicUrl": settings.public_url, "logo": settings.app_logo, "favicon": settings.app_favicon, "defaultAccessibility": {"theme": "system", "textSize": 100, "reducedMotion": False}, "features": {"persistentStorage": False, "formats": list(exporters)}}
 
 
 @app.get("/api/v1/status")
