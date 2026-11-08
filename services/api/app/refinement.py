@@ -76,6 +76,8 @@ def apply_plan(representation: Representation, plan: EditPlan) -> Representation
         elif operation.action == "texture":
             result.export_settings.texture = operation.text
         elif operation.action == "legend":
+            if result.export_settings.profile == "bana2022" and not operation.value:
+                raise ValueError("The numbered map requires its corresponding legend.")
             result.export_settings.legend = bool(operation.value)
         elif operation.action == "density":
             if operation.text == "low":

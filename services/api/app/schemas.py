@@ -59,10 +59,25 @@ class OutputSettings(BaseModel):
     contrast: Literal["standard", "high"] = "high"
     tactile_title: str = Field(default="Map", min_length=1, max_length=120)
     braille_table: Literal["en-ueb-g2.ctb"] = "en-ueb-g2.ctb"
-    label_mode: Literal["auto", "numbered", "full"] = "auto"
-    split_crowded_maps: bool = True
-    max_map_views: int = Field(default=6, ge=1, le=6)
-    key_position: Literal["below", "before"] = "below"
+    label_mode: Literal["numbered"] = "numbered"
+    split_crowded_maps: Literal[False] = False
+    max_map_views: int = Field(default=1, ge=1, le=1)
+    key_position: Literal["below"] = "below"
+
+    @field_validator("label_mode", mode="before")
+    @classmethod
+    def use_numbered_labels(cls, value: str) -> str:
+        return "numbered" if value in ("auto", "full", "numbered") else value
+
+    @field_validator("split_crowded_maps", mode="before")
+    @classmethod
+    def use_single_map(cls, value: bool) -> bool:
+        return False
+
+    @field_validator("key_position", mode="before")
+    @classmethod
+    def use_bottom_key(cls, value: str) -> str:
+        return "below" if value in ("before", "below") else value
 
     @field_validator("braille_table", mode="before")
     @classmethod
@@ -72,7 +87,7 @@ class OutputSettings(BaseModel):
     @field_validator("max_map_views", mode="before")
     @classmethod
     def cap_map_views(cls, value: int) -> int:
-        return min(value, 6) if isinstance(value, int) else value
+        return min(value, 1) if isinstance(value, int) else value
 
 
 class ProjectConfig(BaseModel):

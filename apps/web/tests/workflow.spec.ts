@@ -82,9 +82,6 @@ test('numbered braille key uses complete names and exports without new AI analys
   await label.fill('North Springfield');
   await label.press('Tab');
   await expect(label).toBeEnabled();
-  await page.getByRole('combobox', { name: 'Map labels', exact: true }).selectOption('numbered');
-  await page.getByRole('combobox', { name: 'Key position', exact: true }).selectOption('below');
-  await page.getByRole('button', { name: 'Apply output settings', exact: true }).click();
   await expect(page.locator('.numbered-key summary')).toBeVisible();
   await page.locator('.numbered-key summary').click();
   await expect(page.getByRole('cell', { name: 'North Springfield', exact: true })).toBeVisible();

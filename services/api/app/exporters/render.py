@@ -34,7 +34,7 @@ class Exporter:
             if self.id == "png":
                 raster = cairosvg.svg2png(bytestring=svg, output_width=1800)
                 with Image.open(BytesIO(raster)) as image:
-                    resolution = image.width * 25.4 / representation.export_settings.page_width_mm
+                    resolution = image.width * 25.4 / document.report["page"]["width_mm"]
                     buffer = BytesIO()
                     image.save(buffer, format="PNG", dpi=(resolution, resolution))
                     return buffer.getvalue()

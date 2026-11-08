@@ -135,7 +135,7 @@ def test_bana_output_updates_validation_and_export_gate_without_ai(client):
     assert result.status_code == 200, result.text
     assert client.get(result.json()["url"]).status_code == 200
     output = rep.export_settings.model_dump()
-    output["legend"] = False
+    output["page_width_mm"] = 100
     assert client.patch(f"/api/v1/projects/{project_id}/output", json=output).status_code == 200
     assert client.get(result.json()["url"]).status_code == 404
     blocked = client.post(f"/api/v1/projects/{project_id}/exports/pdf")
@@ -155,13 +155,14 @@ def test_detail_view_api_exports_selected_page_and_invalidates_all_cached_pages(
     rep.project_id = project_id
     module.save_revision(project_id, rep)
     report = client.get(f"/api/v1/projects/{project_id}/validation").json()
-    assert report["layout"]["automatically_split"]
+    assert not report["layout"]["automatically_split"]
+    assert len(report["pages"]) == 1
     selected = report["panels"][-1]["map_page_index"]
     generated = client.post(f"/api/v1/projects/{project_id}/exports/svg?page={selected}")
     assert generated.status_code == 200, generated.text
     downloaded = client.get(generated.json()["url"])
     assert downloaded.status_code == 200
-    assert f"Map view {len(report['panels'])}" in downloaded.text
+    assert "Map" in downloaded.text
     assert client.get(f"/api/v1/projects/{project_id}/preview?page={selected}&english=true").status_code == 200
     assert client.post(f"/api/v1/projects/{project_id}/exports/svg?page=999").status_code == 422
     pdf = client.post(f"/api/v1/projects/{project_id}/exports/pdf")
@@ -173,7 +174,7 @@ def test_detail_view_api_exports_selected_page_and_invalidates_all_cached_pages(
     assert client.patch(f"/api/v1/projects/{project_id}/output", json=settings).status_code == 200
     assert client.get(generated.json()["url"]).status_code == 404
     changed = client.get(f"/api/v1/projects/{project_id}/validation").json()
-    assert len(changed["numeric_key"]) == 16
+    assert len(changed["numeric_key"]) == 17
     assert changed["layout"]["coverage_complete"]
 
 

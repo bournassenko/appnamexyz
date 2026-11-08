@@ -29,83 +29,51 @@ def crowded_representation():
     return rep
 
 
-def test_existing_projects_migrate_to_contracted_braille_and_six_views():
+def test_existing_projects_migrate_to_one_numbered_map():
     from app.schemas import OutputSettings
-    settings = OutputSettings.model_validate({"braille_table": "en-ueb-g1.ctb", "max_map_views": 32})
+    settings = OutputSettings.model_validate({"braille_table": "en-ueb-g1.ctb", "max_map_views": 32, "label_mode": "full", "split_crowded_maps": True, "key_position": "before"})
     assert settings.braille_table == "en-ueb-g2.ctb"
-    assert settings.max_map_views == 6
-    rep = map_representation()
-    rep.export_settings = settings
-    rep.elements[1].label = "the"
-    document = prepare_document(rep)
-    root = ET.fromstring(document.pages[document.map_index].svg)
-    label = root.find(".//{http://www.w3.org/2000/svg}g[@aria-label='the']")
-    assert label.attrib["data-braille-table"] == "en-ueb-g2.ctb"
-    assert label.attrib["data-braille"] == "⠮"
+    assert settings.max_map_views == 1
+    assert settings.label_mode == "numbered"
+    assert not settings.split_crowded_maps
+    assert settings.key_position == "below"
 
 
-def test_crowded_maps_expand_to_complete_views_with_full_names():
+def test_dense_map_has_one_sheet_all_numeric_labels_and_complete_bottom_key():
     rep = crowded_representation()
     original = rep.model_dump_json()
     document = prepare_document(rep)
     report = document.report
     assert report["automated_checks_passed"], report["issues"]
-    assert report["layout"]["automatically_split"]
-    assert 1 < report["layout"]["map_views"] <= 16
+    assert len(document.pages) == 1
+    assert report["layout"]["map_views"] == 1
+    assert not report["layout"]["automatically_split"]
     assert report["layout"]["coverage_complete"]
-    assert report["layout"]["covered_elements"] == 17
-    assert all(not label["key"] for label in report["labels"])
-    assert {label["text"] for label in report["labels"]} == {element.label for element in rep.elements if element.label}
-    assigned = [element_id for panel in report["panels"] for element_id in panel["element_ids"]]
-    assert sorted(assigned) == sorted(element.id for element in rep.elements)
-    assert max(panel["zoom"] for panel in report["panels"]) > 2
-    for panel in report["panels"]:
-        window = box(*panel["source_bounds"])
-        for element in rep.elements:
-            if element.id in panel["element_ids"]:
-                from app.exporters.tactile import element_geometry
-                assert window.buffer(1e-8).covers(element_geometry(element))
-        page = ET.fromstring(document.pages[panel["map_page_index"]].svg)
-        assert panel["automated_checks_passed"]
-        for element_id in panel["element_ids"]:
-            assert page.find(f".//{{http://www.w3.org/2000/svg}}g[@id='{element_id}']") is not None
-    assert rep.model_dump_json() == original
-
-
-def test_numbered_views_have_consistent_braille_references_and_all_pages_export():
-    from app.exporters.render import render_svg
-    rep = crowded_representation()
-    rep.export_settings.label_mode = "numbered"
-    document = prepare_document(rep)
-    assert document.report["automated_checks_passed"], document.report["issues"]
-    assert document.report["layout"]["automatically_split"]
+    assert len(report["labels"]) == len(rep.elements) == 17
+    assert len(report["numeric_key"]) == 17
+    assert report["layout"]["automatic_enlargement"] > 1
     translator = BrailleTranslator("en-ueb-g1.ctb")
-    references = {entry["element_id"]: entry for entry in document.report["numeric_key"]}
-    assert len(references) == 16
-    assert all(panel["key_inline"] for panel in document.report["panels"])
-    for label in document.report["labels"]:
-        assert label["key"] == references[label["element_id"]]["number"]
+    key = {entry["element_id"]: entry for entry in report["numeric_key"]}
+    for label in report["labels"]:
+        assert label["key"] == key[label["element_id"]]["number"]
         assert label["braille"] == translator.translate(label["key"])
         assert label["braille"].startswith("⠼")
-        assert references[label["element_id"]]["text"] == label["text"]
-    for panel in document.report["panels"]:
-        map_page = ET.fromstring(render_svg(rep, panel["map_page_index"], english=True))
-        english_labels = {group.get("aria-label") for group in map_page.findall(".//{http://www.w3.org/2000/svg}g[@class='braille-english']")}
-        for label in document.report["labels"]:
-            if label["view_number"] == panel["number"]:
-                assert label["key"] in english_labels
-    pdf = PdfReader(BytesIO(exporters["pdf"].render(rep)))
-    assert len(pdf.pages) == len(document.pages)
-    with ZipFile(BytesIO(exporters["bundle"].render(rep))) as archive:
-        assert len([name for name in archive.namelist() if name.endswith(".svg")]) == len(document.pages)
-        assert json.loads(archive.read("validation.json"))["layout"]["coverage_complete"]
-    selected = document.report["panels"][-1]["map_page_index"]
-    assert exporters["svg"].render(rep, selected).decode() == document.pages[selected].svg
+        assert label["bounds_mm"][3] < report["key_top_mm"]
+    frame = report["map_frame_mm"]
+    assert report["key_top_mm"] >= frame[1] + frame[3] + 10
+    assert {entry["text"] for entry in report["numeric_key"]} >= {element.label for element in rep.elements if element.label}
+    assert "Unnamed border" in {entry["text"] for entry in report["numeric_key"]}
+    root = ET.fromstring(document.pages[0].svg)
+    for element in rep.elements:
+        assert root.find(f".//{{http://www.w3.org/2000/svg}}g[@id='{element.id}']") is not None
+    bounds = [box(*label["bounds_mm"]) for label in report["labels"]]
+    for index, first in enumerate(bounds):
+        assert all(first.distance(second) >= 3.199 for second in bounds[index + 1:])
+    assert rep.model_dump_json() == original
 
 
 def test_reference_numbers_survive_visibility_changes_and_duplicate_ids_are_blocked():
     rep = crowded_representation()
-    rep.export_settings.label_mode = "numbered"
     original = prepare_document(rep).report
     numbers = {entry["element_id"]: entry["number"] for entry in original["numeric_key"]}
     rep.elements[1].visible = False
@@ -116,41 +84,6 @@ def test_reference_numbers_survive_visibility_changes_and_duplicate_ids_are_bloc
     assert not invalid["automated_checks_passed"]
     assert not invalid["layout"]["coverage_complete"]
     assert any(issue["code"] == "duplicate_element_ids" for issue in invalid["issues"])
-
-
-def test_below_map_key_is_geometrically_separate_and_deviation_is_explicit():
-    rep = map_representation()
-    rep.export_settings.label_mode = "numbered"
-    document = prepare_document(rep)
-    report = document.report
-    assert report["key_inline"]
-    frame = report["map_frame_mm"]
-    assert report["key_top_mm"] >= frame[1] + frame[3] + 10
-    assert any(issue["code"] == "key_placement_review" for issue in report["issues"])
-    rep.export_settings.key_position = "before"
-    report = prepare_document(rep).report
-    assert not any(issue["code"] == "key_placement_review" for issue in report["issues"])
-
-
-def test_view_limit_never_silently_drops_features_or_ignores_conflicts():
-    rep = crowded_representation()
-    rep.export_settings.max_map_views = 1
-    document = prepare_document(rep)
-    assert document.report["layout"]["limit_reached"]
-    assert document.report["layout"]["covered_elements"] == 17
-    assert not document.report["automated_checks_passed"]
-    with pytest.raises(TactileValidationError):
-        exporters["pdf"].render(rep)
-
-
-def test_maps_above_single_view_feature_limit_retain_every_element():
-    rep = map_representation()
-    rep.elements = [Element(id=f"point-{index:03}", category="cities", geometry=Geometry(type="point", coordinates=[[0.05 + index % 10 * 0.09, 0.05 + index // 10 * 0.1]]), confidence=1, provenance="synthetic") for index in range(90)]
-    document = prepare_document(rep)
-    assert document.report["layout"]["automatically_split"]
-    assert document.report["layout"]["covered_elements"] == 90
-    assert document.report["layout"]["coverage_complete"]
-    assert not any(issue["code"] in ("coverage_missing", "feature_limit") for issue in document.report["issues"])
 
 
 def test_real_liblouis_translation_and_physical_dot_dimensions():
@@ -186,14 +119,14 @@ def test_english_preview_uses_braille_instead_of_source_label_and_preserves_map(
     original = ET.fromstring(render_svg(rep))
     translated = ET.fromstring(render_svg(rep, english=True))
     assert translated.attrib["viewBox"] == original.attrib["viewBox"]
-    for element_id in ("border", "city"):
+    for element_id in ("border",):
         selector = f".//{{http://www.w3.org/2000/svg}}g[@id='{element_id}']"
         assert ET.tostring(original.find(selector)) == ET.tostring(translated.find(selector))
     assert translated.findall(".//{http://www.w3.org/2000/svg}text")
     assert not ET.fromstring(exporters["svg"].render(rep)).findall(".//{http://www.w3.org/2000/svg}text")
 
 
-def test_physical_layout_and_actual_multipage_files():
+def test_single_sheet_physical_dimensions_and_actual_exports():
     rep = map_representation()
     original = rep.model_dump_json()
     document = prepare_document(rep)
@@ -201,20 +134,18 @@ def test_physical_layout_and_actual_multipage_files():
     assert not document.report["certified"]
     assert document.report["requires_human_review"]
     assert document.report["page"]["rows"] == 25
-    label = document.report["labels"][0]
+    label = next(label for label in document.report["labels"] if label["element_id"] == "city")
     assert label["text"] == "Oak Town"
     bounds = box(*label["bounds_mm"])
     assert bounds.within(box(12.7, 12.7, 279.4, 266.7))
     svg = ET.fromstring(exporters["svg"].render(rep))
     assert svg.attrib["width"] == "292.1mm"
-    assert svg.attrib["viewBox"] == "0 0 292.1 279.4"
+    assert svg.attrib["viewBox"] == f"0 0 292.1 {document.report['page']['height_mm']}"
     assert not svg.findall(".//{http://www.w3.org/2000/svg}text")
-    city = svg.find(".//{http://www.w3.org/2000/svg}g[@id='city']/{http://www.w3.org/2000/svg}circle")
+    city = svg.find(".//{http://www.w3.org/2000/svg}g[@id='city']")
     assert city is not None
-    assert float(city.attrib["r"]) * 2 + float(city.attrib["stroke-width"]) >= 6
-    city_x, city_y = float(city.attrib["cx"]), float(city.attrib["cy"])
-    from shapely.geometry import Point
-    assert bounds.distance(Point(city_x, city_y).buffer(3.2)) >= 3.199
+    assert not city.findall("{http://www.w3.org/2000/svg}circle")
+    assert city.find("{http://www.w3.org/2000/svg}g").attrib["data-braille"].startswith("⠼")
     pdf = PdfReader(BytesIO(exporters["pdf"].render(rep)))
     assert len(pdf.pages) == len(document.pages)
     assert float(pdf.pages[0].mediabox.width) * 25.4 / 72 == pytest.approx(292.1, abs=0.001)
@@ -236,37 +167,11 @@ def test_colliding_symbols_block_production_but_leave_draft_available():
     rep.elements.append(rep.elements[1].model_copy(update={"id": "overlapping-city"}))
     document = prepare_document(rep)
     assert document.report["status"] == "blocked"
-    assert any(issue["code"] == "feature_clearance" for issue in document.report["issues"])
+    assert any(issue["code"] == "label_clearance" for issue in document.report["issues"])
     assert ET.fromstring(render_svg(rep)).tag.endswith("svg")
     for exporter in exporters.values():
         with pytest.raises(TactileValidationError):
             exporter.render(rep)
-
-
-def test_numbered_braille_keys_preserve_separate_key_pages():
-    rep = map_representation()
-    rep.elements[1].label = "Oak Town Northern Educational District"
-    rep.export_settings.page_height_mm = 200
-    rep.export_settings.key_position = "before"
-    rep.export_settings.label_mode = "numbered"
-    document = prepare_document(rep)
-    assert document.report["automated_checks_passed"], document.report["issues"]
-    assert [page.role for page in document.pages] == ["key-1", "map"]
-    assert document.map_index == 1
-    label = document.report["labels"][0]
-    assert 2 <= len(label["braille"]) <= 3
-    assert any((ord(cell) - 0x2800) & 0b100100 for cell in label["braille"])
-    assert label["key"] == "1"
-    assert label["braille"].startswith("⠼")
-    pdf = PdfReader(BytesIO(exporters["pdf"].render(rep)))
-    assert len(pdf.pages) == 2
-    with ZipFile(BytesIO(exporters["bundle"].render(rep))) as archive:
-        assert "01-key-1.svg" in archive.namelist()
-        assert "02-map.svg" in archive.namelist()
-        root = ET.fromstring(archive.read("01-key-1.svg"))
-        city = root.find(".//{http://www.w3.org/2000/svg}circle[@stroke='black']")
-        assert city is not None
-        assert float(city.attrib["r"]) * 2 + float(city.attrib["stroke-width"]) == pytest.approx(6.4)
 
 
 def test_missing_braille_engine_fails_closed(monkeypatch):

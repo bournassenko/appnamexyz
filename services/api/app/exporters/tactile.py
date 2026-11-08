@@ -20,7 +20,7 @@ PRIMARY_LINE_MIN_MM = 12.7
 AREA_MIN_MM2 = 25.4 * 25.4 / 4
 MARGIN_MM = 12.7
 LINE_WIDTH_MM = 0.7
-MAX_FEATURES = 80
+MAX_FEATURES = 300
 LINE_STYLES = {"borders": "solid", "rivers": "dashed", "roads": "dotted", "other": "solid", "regions": "solid", "landmarks": "solid", "cities": "solid"}
 POINT_STYLES = {"cities": "circle", "landmarks": "triangle", "other": "square"}
 MANUAL_CHECKS = [
@@ -172,7 +172,7 @@ def key_entries(features: list[Feature], translator: BrailleTranslator, columns:
     return sorted(entries.values(), key=lambda entry: (order[entry.kind], entry.name))
 
 
-def try_place(feature: Feature, cells: str, obstacles: list[Feature], placed: list[PlacedLabel], frame: BaseGeometry, gap: float) -> BaseGeometry | None:
+def try_place(feature: Feature, cells: str, obstacles: list[Feature], placed: list[PlacedLabel], frame: BaseGeometry, gap: float, numeric_points: bool = False) -> BaseGeometry | None:
     width = braille_width(cells)
     height = CELL_HEIGHT_MM
     target = feature.ink
@@ -182,18 +182,25 @@ def try_place(feature: Feature, cells: str, obstacles: list[Feature], placed: li
     elif feature.kind == "line":
         anchor = feature.geometry.interpolate(0.5, normalized=True)
     else:
-        anchor = feature.geometry
+        anchor = feature.geometry if isinstance(feature.geometry, Point) else feature.geometry.representative_point()
     proposals: list[tuple[float, float]] = []
+    if numeric_points and feature.kind in ("point", "label"):
+        proposals.append((anchor.x - width / 2, anchor.y - height / 2))
     if feature.kind == "area":
         proposals.append((anchor.x - width / 2, anchor.y - height / 2))
     for clearance in (gap, min(MAX_LABEL_GAP_MM, gap + 1.0)):
         proposals += [(max_x + clearance, anchor.y - height / 2), (min_x - clearance - width, anchor.y - height / 2), (anchor.x - width / 2, min_y - clearance - height), (anchor.x - width / 2, max_y + clearance)]
     if feature.kind == "line":
-        for fraction in (0.25, 0.5, 0.75):
+        for fraction in (0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875):
             point = feature.geometry.interpolate(fraction, normalized=True)
             for angle in range(0, 360, 45):
                 dx, dy = math.cos(math.radians(angle)), math.sin(math.radians(angle))
-                proposals.append((point.x + dx * (gap + width / 2) - width / 2, point.y + dy * (gap + height / 2) - height / 2))
+                proposals.append((point.x + dx * (gap + LINE_WIDTH_MM + width / 2) - width / 2, point.y + dy * (gap + LINE_WIDTH_MM + height / 2) - height / 2))
+    if numeric_points and feature.kind in ("point", "label"):
+        proposals = proposals[:1]
+    if numeric_points and feature.kind == "line" and isinstance(feature.geometry, LineString) and feature.geometry.is_ring:
+        interior = Polygon(feature.geometry)
+        proposals.sort(key=lambda position: not interior.covers(box(position[0], position[1], position[0] + width, position[1] + height).buffer(gap)))
     for x, y in proposals:
         if width <= frame.bounds[2] - frame.bounds[0]:
             x = max(frame.bounds[0], min(x, frame.bounds[2] - width))
@@ -206,6 +213,8 @@ def try_place(feature: Feature, cells: str, obstacles: list[Feature], placed: li
             continue
         failed = False
         for obstacle in obstacles:
+            if numeric_points and obstacle.kind == "point":
+                continue
             if obstacle.kind == "label":
                 continue
             if obstacle is feature and feature.kind == "area" and feature.geometry.covers(candidate.buffer(gap)):
@@ -245,7 +254,7 @@ def draw_key(entries: list[KeyEntry], translator: BrailleTranslator, x: float, y
     return "".join(content), cursor + 2 * LINE_PITCH_MM
 
 
-def prepare_single_document(rep: Representation, translator: BrailleTranslator | None = None, viewport: tuple[float, float, float, float] | None = None, number_keys: dict[str, str] | None = None) -> TactileDocument:
+def prepare_single_document(rep: Representation, translator: BrailleTranslator | None = None, viewport: tuple[float, float, float, float] | None = None, number_keys: dict[str, str] | None = None, continuous_key: bool = False) -> TactileDocument:
     output = rep.export_settings
     issues: list[Issue] = []
     translator = translator or BrailleTranslator(output.braille_table)
@@ -253,7 +262,7 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
     width, height = output.page_width_mm, output.page_height_mm
     columns = min(40, math.floor((width - 2 * MARGIN_MM + 1e-7) / CELL_PITCH_MM))
     rows = min(25, math.floor((height - 2 * MARGIN_MM + 1e-7) / LINE_PITCH_MM))
-    content_width = columns * CELL_PITCH_MM
+    content_width = width - 2 * MARGIN_MM if continuous_key else columns * CELL_PITCH_MM
     content_height = rows * LINE_PITCH_MM
     gap = max(MIN_GAP_MM, output.minimum_spacing_mm)
     if columns < 12 or rows < 12:
@@ -295,14 +304,22 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
     categories = {(element.category, element.geometry.type) for element, _ in raw if element.category != "labels"}
     estimated_key_height = (4 + len(categories) * 2 + label_count * 2) * LINE_PITCH_MM
     try:
-        category_rows = sum(2 if category == "regions" and geometry_type == "polygon" else 1 for category, geometry_type in categories)
+        category_rows = 0 if continuous_key else sum(2 if category == "regions" and geometry_type == "polygon" else 1 for category, geometry_type in categories)
         name_rows = sum(len(wrap_braille(translator.translate(element.label), max(columns - len(translator.translate(number_keys[element.id], "en-ueb-g1.ctb")) - 1, 1))) for element, _ in raw if element.label) if output.label_mode != "full" else 0
         estimated_key_height = (5 + category_rows + name_rows) * LINE_PITCH_MM
     except BrailleError:
         pass
-    inline_key = output.legend and content_height - title_height - estimated_key_height >= 100
+    inline_key = output.legend and (continuous_key or content_height - title_height - estimated_key_height >= 100)
     map_top = MARGIN_MM + title_height + (estimated_key_height if inline_key and output.key_position == "before" else 0)
-    map_height = content_height - title_height - (estimated_key_height if inline_key else 0)
+    map_height = content_height - title_height - (estimated_key_height if inline_key and not continuous_key else 0)
+    if continuous_key:
+        map_height = max(100, height - 2 * MARGIN_MM - title_height)
+        height = MARGIN_MM + title_height + map_height + estimated_key_height + MARGIN_MM
+        output.page_height_mm = height
+        content_height = height - 2 * MARGIN_MM
+        if height > 5080:
+            issues.append(Issue("sheet_too_long", "3.4.2", "The complete map and key exceed the maximum sheet length. Reduce the visible content before export."))
+        issues.append(Issue("continuous_sheet_review", "3.4.2, 5.8.3", "One extended sheet with the key below the map, as requested. This differs from BANA's standard page grid and key-before-map order. Print at actual size on suitable media and verify a physical proof.", severity="review"))
     frame_values = (MARGIN_MM, map_top, content_width, max(20, map_height))
     frame = box(frame_values[0], frame_values[1], frame_values[0] + frame_values[2], frame_values[1] + frame_values[3])
     features: list[Feature] = []
@@ -332,6 +349,8 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
                 issues.append(Issue("line_fragment_too_short", "3.4.3.2", "A line fragment left around a point symbol is shorter than 12.7 mm. Simplify the geometry or separate the features.", [feature.element.id], required_mm=PRIMARY_LINE_MIN_MM))
     crossing_count = 0
     for first, second in combinations(features, 2):
+        if continuous_key and (first.kind == "point" or second.kind == "point"):
+            continue
         if first.kind == "label" or second.kind == "label":
             continue
         if first.kind == "line" and second.kind == "line" and first.geometry.intersects(second.geometry):
@@ -345,7 +364,7 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
     labels: list[PlacedLabel] = []
     numeric_entries: dict[str, KeyEntry] = {}
     try:
-        entries = key_entries(features, translator, max(columns, 12))
+        entries = [] if continuous_key else key_entries(features, translator, max(columns, 12))
     except BrailleError as error:
         entries = []
         issues.append(Issue("key_translation", "5.7, 5.8", str(error)))
@@ -355,13 +374,13 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
             continue
         try:
             cells = translator.translate(text)
-            placement = try_place(feature, cells, features, labels, frame, gap) if output.label_mode != "numbered" else None
+            placement = try_place(feature, cells, features, labels, frame, gap, continuous_key) if output.label_mode != "numbered" else None
             keyed = False
             key = ""
             if placement is None and output.label_mode != "full":
                 key = number_keys[feature.element.id]
                 cells = translator.translate(key, "en-ueb-g1.ctb")
-                placement = try_place(feature, cells, features, labels, frame, gap)
+                placement = try_place(feature, cells, features, labels, frame, gap, continuous_key)
                 keyed = True
             if placement is None:
                 issues.append(Issue("label_clearance", "3.4.3.12, 3.4.3.13, 5.10", "No collision-free braille label position was found. Enlarge the page, shorten the label, or hide nearby detail.", [feature.element.id]))
@@ -376,7 +395,7 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
     entries += [numeric_entries[key] for key in sorted(numeric_entries, key=int)]
     if entries and not output.legend:
         issues.append(Issue("key_required", "5.7, 5.8", "The key must be enabled for BANA production output."))
-    if entries and output.legend and output.key_position == "below":
+    if entries and output.legend and output.key_position == "below" and not continuous_key:
         issues.append(Issue("key_placement_review", "5.8.3", "The key is placed below or after the map as selected. BANA prescribes the key before the graphic; choose Before map (BANA) for that production order.", severity="review"))
     for kind in ("area", "line", "point"):
         if len({feature.pattern for feature in features if feature.kind == kind}) > 5:
@@ -390,6 +409,8 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
     for feature in features:
         if feature.kind == "label":
             continue
+        if continuous_key and feature.kind == "point":
+            continue
         geometry = feature.geometry
         fill = "none"
         if feature.kind == "area" and feature.pattern != "none":
@@ -402,7 +423,9 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
         map_content.append(f'<g id="{escape(feature.element.id, quote=True)}"><title>{escape(feature.element.label or feature.element.category)}</title>{drawing}</g>')
     for label in labels:
         x, y, _, _ = label.bounds.bounds
-        map_content.append(draw_braille(label.cells, x, y, label.text, "en-ueb-g1.ctb" if label.keyed else translator.table))
+        drawing = draw_braille(label.cells, x, y, label.text, "en-ueb-g1.ctb" if label.keyed else translator.table)
+        numeric_point = continuous_key and any(feature.element.id == label.element_id and feature.kind == "point" for feature in features)
+        map_content.append(f'<g id="{escape(label.element_id, quote=True)}">{drawing}</g>' if numeric_point else drawing)
     pages: list[Page] = []
     key_top: float | None = None
     if output.legend and entries:
@@ -455,7 +478,7 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
         "requires_human_review": True,
         "production_medium": "microcapsule preparation; device calibration required",
         "braille": {"translator": "Liblouis", "table": translator.table, "key_table": "en-ueb-g1.ctb", "dot_diameter_mm": DOT_DIAMETER_MM, "dot_pitch_mm": DOT_PITCH_MM, "cell_pitch_mm": CELL_PITCH_MM, "line_pitch_mm": LINE_PITCH_MM, "physical_dot_height_verified": False},
-        "page": {"width_mm": width, "height_mm": height, "columns": columns, "rows": rows, "margin_mm": MARGIN_MM, "minimum_clearance_mm": gap, "point_symbol_diameter_mm": SYMBOL_DIAMETER_MM},
+        "page": {"width_mm": width, "height_mm": height, "columns": columns, "rows": rows, "margin_mm": MARGIN_MM, "minimum_clearance_mm": gap, "point_symbol_diameter_mm": None if continuous_key else SYMBOL_DIAMETER_MM},
         "scope": ["physical units", "six-dot UEB braille", "minimum primary line length", "conservative area size", "point symbol dimensions", "point-to-feature clearance", "label-to-feature and label-to-label clearance", "label texture knockout", "key dimensions, order, matching symbols and braille formatting", "page grid and bounds"],
         "issues": [issue.__dict__ for issue in issues],
         "manual_checks": MANUAL_CHECKS,
@@ -466,7 +489,7 @@ def prepare_single_document(rep: Representation, translator: BrailleTranslator |
         "key_position": output.key_position,
         "key_inline": inline_key and bool(entries),
         "key_top_mm": key_top,
-        "rendered_element_ids": sorted({feature.element.id for feature in features if feature.kind != "label" and not feature.geometry.is_empty} | {label.element_id for label in labels}),
+        "rendered_element_ids": sorted({feature.element.id for feature in features if feature.kind != "label" and not (continuous_key and feature.kind == "point") and not feature.geometry.is_empty} | {label.element_id for label in labels}),
         "labels": [{"element_id": label.element_id, "text": label.text, "braille": label.cells, "key": label.key, "bounds_mm": list(label.bounds.bounds)} for label in labels],
         "print_instructions": "Print at 100% actual size without fit-to-page. Key and map must be assembled on the facing sides specified in pages. For multiple key pages, use map-left/key-right pairs, adding blank reverse pages as needed. Confirm braille height, material, orientation, source accuracy, and reader suitability on a physical proof.",
     }
