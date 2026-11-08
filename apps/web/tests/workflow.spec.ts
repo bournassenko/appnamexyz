@@ -20,7 +20,7 @@ test('keyboard settings, advanced configuration, and accessible initial screen',
   await expect(page.getByRole('combobox', { name: 'Recognition engine', exact: true })).toBeVisible();
   await expect(page.getByText('Content to include', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /Disable new processing|Enable processing/ })).toHaveCount(0);
-  for (const theme of ['light', 'dark']) {
+  for (const theme of ['light', 'dark', 'blue-text', 'blue-background']) {
     await page.getByRole('button', { name: 'Accessibility', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Accessibility', exact: true })).toBeVisible();
     await page.getByRole('combobox', { name: 'Color theme', exact: true }).selectOption(theme);

@@ -50,7 +50,7 @@
   $effect(() => {
     if (typeof document !== 'undefined') {
       const dark = preferences.theme === 'dark' || preferences.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      document.documentElement.dataset.theme = preferences.theme === 'system' ? (dark ? 'dark' : 'light') : preferences.theme;
       document.documentElement.dataset.contrast = preferences.highContrast ? 'high' : 'normal';
 
       document.documentElement.style.fontSize = `${preferences.textSize}%`;
@@ -156,7 +156,7 @@
 <header class="topbar">
   <a href="/" class="brand" aria-label={`${brand.name} home`}><img src={brand.logo} alt="" width="36" height="36" /><span>{brand.name}</span></a>
   <div class="header-actions">
-    <Popover.Root><Popover.Trigger class="accessibility-trigger"><Eye size={18}/><span>Accessibility</span></Popover.Trigger><Popover.Portal><Popover.Content class="accessibility-popover" sideOffset={8} align="end" role="dialog" aria-labelledby="accessibility-heading"><div class="dialog-heading"><h2 id="accessibility-heading">Accessibility</h2><Popover.Close class="icon-button" aria-label="Close accessibility settings"><X size={18}/></Popover.Close></div><label>Color theme<select bind:value={preferences.theme}><option value="system">System</option><option value="light">Black Text, White Background</option><option value="dark">White Text, Black Background</option></select></label><label class="check"><input type="checkbox" bind:checked={preferences.highContrast}/>High contrast</label><label>Text size: {preferences.textSize}%<input type="range" min="100" max="150" step="10" bind:value={preferences.textSize}/></label><label class="check"><input type="checkbox" bind:checked={preferences.reducedMotion}/>Reduce motion</label></Popover.Content></Popover.Portal></Popover.Root>
+    <Popover.Root><Popover.Trigger class="accessibility-trigger"><Eye size={18}/><span>Accessibility</span></Popover.Trigger><Popover.Portal><Popover.Content class="accessibility-popover" sideOffset={8} align="end" role="dialog" aria-labelledby="accessibility-heading"><div class="dialog-heading"><h2 id="accessibility-heading">Accessibility</h2><Popover.Close class="icon-button" aria-label="Close accessibility settings"><X size={18}/></Popover.Close></div><label>Color theme<select bind:value={preferences.theme}><option value="system">System</option><option value="light">Black Text, White Background</option><option value="dark">White Text, Black Background</option><option value="blue-text">Blue Text, White Background</option><option value="blue-background">White Text, Blue Background</option></select></label><label class="check"><input type="checkbox" bind:checked={preferences.highContrast}/>High contrast</label><label>Text size: {preferences.textSize}%<input type="range" min="100" max="150" step="10" bind:value={preferences.textSize}/></label><label class="check"><input type="checkbox" bind:checked={preferences.reducedMotion}/>Reduce motion</label></Popover.Content></Popover.Portal></Popover.Root>
     <button class="settings-button" onclick={() => settingsOpen = true} aria-label="Open application settings"><Settings size={19} /><span>Settings</span></button>
   </div>
 </header>
