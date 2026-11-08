@@ -371,36 +371,40 @@ def history(project_id: str, direction: str):
 
 
 @app.post("/api/v1/projects/{project_id}/exports/{format_id}")
-async def generate_export(project_id: str, format_id: str):
+async def generate_export(project_id: str, format_id: str, page: int | None = None):
     rep = representation(project_id)
     exporter = exporters.get(format_id)
     if exporter is None:
         raise HTTPException(404, "Unsupported export format.")
     try:
         async with semaphore:
-            data = await asyncio.to_thread(exporter.render, rep)
+            data = await asyncio.to_thread(exporter.render, rep, page)
     except TactileValidationError:
         raise
     except ValueError as error:
         raise HTTPException(422, str(error))
     if representation(project_id).model_dump() != rep.model_dump():
         raise HTTPException(409, "The map changed during export. Generate the file again.")
-    path = storage.project_path(project_id) / f"export.{exporter.extension}"
+    suffix = f"{page}." if page is not None and format_id in ("svg", "png") else ""
+    path = storage.project_path(project_id) / f"export.{suffix}{exporter.extension}"
     path.write_bytes(data)
     warnings = await asyncio.to_thread(validate_layout, rep)
-    return {"url": f"/api/v1/projects/{project_id}/downloads/{format_id}", "size": len(data), "mime_type": exporter.mime_type, "filename": f"accessible-map.{exporter.extension}", "warnings": warnings, "map_page_only": rep.export_settings.profile == "bana2022" and format_id in ("svg", "png")}
+    filename = f"accessible-map-page-{page + 1}.{exporter.extension}" if suffix else f"accessible-map.{exporter.extension}"
+    return {"url": f"/api/v1/projects/{project_id}/downloads/{format_id}" + (f"?page={page}" if suffix else ""), "size": len(data), "mime_type": exporter.mime_type, "filename": filename, "warnings": warnings, "single_page": format_id in ("svg", "png")}
 
 
 @app.get("/api/v1/projects/{project_id}/downloads/{format_id}")
-def download(project_id: str, format_id: str):
+def download(project_id: str, format_id: str, page: int | None = None):
     project(project_id)
     exporter = exporters.get(format_id)
     if exporter is None:
         raise HTTPException(404, "Unsupported export format.")
-    path = storage.project_path(project_id) / f"export.{exporter.extension}"
+    suffix = f"{page}." if page is not None and format_id in ("svg", "png") else ""
+    path = storage.project_path(project_id) / f"export.{suffix}{exporter.extension}"
     if not path.exists():
         raise HTTPException(404, "Generate this export before downloading it.")
-    return FileResponse(path, media_type=exporter.mime_type, filename=f"accessible-map.{exporter.extension}")
+    filename = f"accessible-map-page-{page + 1}.{exporter.extension}" if suffix else f"accessible-map.{exporter.extension}"
+    return FileResponse(path, media_type=exporter.mime_type, filename=filename)
 
 
 @app.get("/api/v1/projects/{project_id}/diagnostics")

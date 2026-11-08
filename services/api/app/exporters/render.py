@@ -20,12 +20,15 @@ class Exporter:
     capabilities: tuple[str, ...]
     hardware: str = "No device-specific compatibility validated"
 
-    def render(self, representation: Representation) -> bytes:
+    def render(self, representation: Representation, page: int | None = None) -> bytes:
         if representation.export_settings.profile == "bana2022":
             document = prepare_document(representation)
             if not document.report["automated_checks_passed"]:
                 raise TactileValidationError(document.report)
-            svg = document.pages[document.map_index].svg.encode()
+            selected = document.map_index if page is None else page
+            if not 0 <= selected < len(document.pages):
+                raise ValueError("Export page does not exist.")
+            svg = document.pages[selected].svg.encode()
             if self.id == "svg":
                 return svg
             if self.id == "png":

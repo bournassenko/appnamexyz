@@ -127,6 +127,7 @@ def test_bana_output_updates_validation_and_export_gate_without_ai(client):
     rep.project_id = project_id
     module.save_revision(project_id, rep)
     assert client.get(f"/api/v1/projects/{project_id}/validation").json()["automated_checks_passed"]
+
     english = client.get(f"/api/v1/projects/{project_id}/preview?english=true")
     assert english.status_code == 200
     assert ElementTree.fromstring(english.content).attrib["data-preview"] == "english"
@@ -143,6 +144,37 @@ def test_bana_output_updates_validation_and_export_gate_without_ai(client):
     assert client.get(f"/api/v1/projects/{project_id}/preview").status_code == 200
     assert client.post(f"/api/v1/projects/{project_id}/history/undo").status_code == 200
     assert client.get(f"/api/v1/projects/{project_id}/validation").json()["automated_checks_passed"]
+
+
+def test_detail_view_api_exports_selected_page_and_invalidates_all_cached_pages(client):
+    import app.main as module
+    from test_tactile import crowded_representation
+    uploaded = client.post("/api/v1/projects", files={"file": ("map.png", image_bytes(), "image/png")}).json()
+    project_id = uploaded["id"]
+    rep = crowded_representation()
+    rep.project_id = project_id
+    module.save_revision(project_id, rep)
+    report = client.get(f"/api/v1/projects/{project_id}/validation").json()
+    assert report["layout"]["automatically_split"]
+    selected = report["panels"][-1]["map_page_index"]
+    generated = client.post(f"/api/v1/projects/{project_id}/exports/svg?page={selected}")
+    assert generated.status_code == 200, generated.text
+    downloaded = client.get(generated.json()["url"])
+    assert downloaded.status_code == 200
+    assert f"Map view {len(report['panels'])}" in downloaded.text
+    assert client.get(f"/api/v1/projects/{project_id}/preview?page={selected}&english=true").status_code == 200
+    assert client.post(f"/api/v1/projects/{project_id}/exports/svg?page=999").status_code == 422
+    pdf = client.post(f"/api/v1/projects/{project_id}/exports/pdf")
+    assert pdf.status_code == 200
+    content = client.get(pdf.json()["url"]).content
+    assert len(PdfReader(BytesIO(content)).pages) == len(report["pages"])
+    settings = rep.export_settings.model_dump()
+    settings["label_mode"] = "numbered"
+    assert client.patch(f"/api/v1/projects/{project_id}/output", json=settings).status_code == 200
+    assert client.get(generated.json()["url"]).status_code == 404
+    changed = client.get(f"/api/v1/projects/{project_id}/validation").json()
+    assert len(changed["numeric_key"]) == 16
+    assert changed["layout"]["coverage_complete"]
 
 
 def test_switch_is_written_to_persistent_state(client, tmp_path):

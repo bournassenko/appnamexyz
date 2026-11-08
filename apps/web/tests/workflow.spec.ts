@@ -63,10 +63,35 @@ test('upload, analyze, refine, undo, and download a map', async ({ page }) => {
   await page.getByRole('button', { name: 'Undo last revision' }).click();
   await expect(page.getByRole('button', { name: 'Redo revision' })).toBeEnabled();
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: /^SVG(?: map)?$/ }).click();
+  await page.getByRole('button', { name: /^SVG(?: map| page)?$/ }).click();
   expect((await download).suggestedFilename()).toBe('accessible-map.svg');
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   expect(results.violations).toEqual([]);
+});
+
+test('numbered braille key uses complete names and exports without new AI analysis', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Advanced Mode', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Recognition engine', exact: true }).selectOption('opencv');
+  await page.getByLabel('Upload a map image').setInputFiles('tests/map.png');
+  await expect(page.getByText('Your map is ready to analyze.')).toBeVisible();
+  await page.getByRole('button', { name: 'Analyze & generate', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Refine', exact: true })).toBeVisible({ timeout: 30000 });
+  await page.locator('.element-editor summary').click();
+  const label = page.getByRole('textbox', { name: 'Label for element 1', exact: true });
+  await label.fill('North Springfield');
+  await label.press('Tab');
+  await expect(label).toBeEnabled();
+  await page.getByRole('combobox', { name: 'Map labels', exact: true }).selectOption('numbered');
+  await page.getByRole('combobox', { name: 'Key position', exact: true }).selectOption('below');
+  await page.getByRole('button', { name: 'Apply output settings', exact: true }).click();
+  await expect(page.locator('.numbered-key summary')).toBeVisible();
+  await page.locator('.numbered-key summary').click();
+  await expect(page.getByRole('cell', { name: 'North Springfield', exact: true })).toBeVisible();
+  await expect(page.locator('.numbered-key')).toContainText('⠼⠁');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'PDF', exact: true }).click();
+  expect((await download).suggestedFilename()).toBe('accessible-map.pdf');
 });
 
 

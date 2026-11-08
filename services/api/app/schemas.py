@@ -59,6 +59,10 @@ class OutputSettings(BaseModel):
     contrast: Literal["standard", "high"] = "high"
     tactile_title: str = Field(default="Map", min_length=1, max_length=120)
     braille_table: Literal["en-ueb-g1.ctb", "en-ueb-g2.ctb"] = "en-ueb-g1.ctb"
+    label_mode: Literal["auto", "numbered", "full"] = "auto"
+    split_crowded_maps: bool = True
+    max_map_views: int = Field(default=16, ge=1, le=32)
+    key_position: Literal["below", "before"] = "below"
 
 
 class ProjectConfig(BaseModel):

@@ -21,6 +21,123 @@ def map_representation():
     ])
 
 
+def crowded_representation():
+    rep = map_representation()
+    rep.elements = [rep.elements[0]]
+    for index in range(16):
+        rep.elements.append(Element(id=f"city-{index:02}", category="cities", label=f"North Springfield {index + 1}", geometry=Geometry(type="point", coordinates=[[0.4 + index % 4 * 0.014, 0.4 + index // 4 * 0.014]]), confidence=1, provenance="synthetic"))
+    return rep
+
+
+def test_crowded_maps_expand_to_complete_views_with_full_names():
+    rep = crowded_representation()
+    original = rep.model_dump_json()
+    document = prepare_document(rep)
+    report = document.report
+    assert report["automated_checks_passed"], report["issues"]
+    assert report["layout"]["automatically_split"]
+    assert 1 < report["layout"]["map_views"] <= 16
+    assert report["layout"]["coverage_complete"]
+    assert report["layout"]["covered_elements"] == 17
+    assert all(not label["key"] for label in report["labels"])
+    assert {label["text"] for label in report["labels"]} == {element.label for element in rep.elements if element.label}
+    assigned = [element_id for panel in report["panels"] for element_id in panel["element_ids"]]
+    assert sorted(assigned) == sorted(element.id for element in rep.elements)
+    assert max(panel["zoom"] for panel in report["panels"]) > 2
+    for panel in report["panels"]:
+        window = box(*panel["source_bounds"])
+        for element in rep.elements:
+            if element.id in panel["element_ids"]:
+                from app.exporters.tactile import element_geometry
+                assert window.buffer(1e-8).covers(element_geometry(element))
+        page = ET.fromstring(document.pages[panel["map_page_index"]].svg)
+        assert panel["automated_checks_passed"]
+        for element_id in panel["element_ids"]:
+            assert page.find(f".//{{http://www.w3.org/2000/svg}}g[@id='{element_id}']") is not None
+    assert rep.model_dump_json() == original
+
+
+def test_numbered_views_have_consistent_braille_references_and_all_pages_export():
+    from app.exporters.render import render_svg
+    rep = crowded_representation()
+    rep.export_settings.label_mode = "numbered"
+    document = prepare_document(rep)
+    assert document.report["automated_checks_passed"], document.report["issues"]
+    assert document.report["layout"]["automatically_split"]
+    translator = BrailleTranslator("en-ueb-g1.ctb")
+    references = {entry["element_id"]: entry for entry in document.report["numeric_key"]}
+    assert len(references) == 16
+    assert all(panel["key_inline"] for panel in document.report["panels"])
+    for label in document.report["labels"]:
+        assert label["key"] == references[label["element_id"]]["number"]
+        assert label["braille"] == translator.translate(label["key"])
+        assert label["braille"].startswith("⠼")
+        assert references[label["element_id"]]["text"] == label["text"]
+    for panel in document.report["panels"]:
+        map_page = ET.fromstring(render_svg(rep, panel["map_page_index"], english=True))
+        english_labels = {group.get("aria-label") for group in map_page.findall(".//{http://www.w3.org/2000/svg}g[@class='braille-english']")}
+        for label in document.report["labels"]:
+            if label["view_number"] == panel["number"]:
+                assert label["key"] in english_labels
+    pdf = PdfReader(BytesIO(exporters["pdf"].render(rep)))
+    assert len(pdf.pages) == len(document.pages)
+    with ZipFile(BytesIO(exporters["bundle"].render(rep))) as archive:
+        assert len([name for name in archive.namelist() if name.endswith(".svg")]) == len(document.pages)
+        assert json.loads(archive.read("validation.json"))["layout"]["coverage_complete"]
+    selected = document.report["panels"][-1]["map_page_index"]
+    assert exporters["svg"].render(rep, selected).decode() == document.pages[selected].svg
+
+
+def test_reference_numbers_survive_visibility_changes_and_duplicate_ids_are_blocked():
+    rep = crowded_representation()
+    rep.export_settings.label_mode = "numbered"
+    original = prepare_document(rep).report
+    numbers = {entry["element_id"]: entry["number"] for entry in original["numeric_key"]}
+    rep.elements[1].visible = False
+    changed = prepare_document(rep).report
+    assert all(numbers[entry["element_id"]] == entry["number"] for entry in changed["numeric_key"])
+    rep.elements[2].id = rep.elements[3].id
+    invalid = prepare_document(rep).report
+    assert not invalid["automated_checks_passed"]
+    assert not invalid["layout"]["coverage_complete"]
+    assert any(issue["code"] == "duplicate_element_ids" for issue in invalid["issues"])
+
+
+def test_below_map_key_is_geometrically_separate_and_deviation_is_explicit():
+    rep = map_representation()
+    rep.export_settings.label_mode = "numbered"
+    document = prepare_document(rep)
+    report = document.report
+    assert report["key_inline"]
+    frame = report["map_frame_mm"]
+    assert report["key_top_mm"] >= frame[1] + frame[3] + 10
+    assert any(issue["code"] == "key_placement_review" for issue in report["issues"])
+    rep.export_settings.key_position = "before"
+    report = prepare_document(rep).report
+    assert not any(issue["code"] == "key_placement_review" for issue in report["issues"])
+
+
+def test_view_limit_never_silently_drops_features_or_ignores_conflicts():
+    rep = crowded_representation()
+    rep.export_settings.max_map_views = 1
+    document = prepare_document(rep)
+    assert document.report["layout"]["limit_reached"]
+    assert document.report["layout"]["covered_elements"] == 17
+    assert not document.report["automated_checks_passed"]
+    with pytest.raises(TactileValidationError):
+        exporters["pdf"].render(rep)
+
+
+def test_maps_above_single_view_feature_limit_retain_every_element():
+    rep = map_representation()
+    rep.elements = [Element(id=f"point-{index:03}", category="cities", geometry=Geometry(type="point", coordinates=[[0.05 + index % 10 * 0.09, 0.05 + index // 10 * 0.1]]), confidence=1, provenance="synthetic") for index in range(90)]
+    document = prepare_document(rep)
+    assert document.report["layout"]["automatically_split"]
+    assert document.report["layout"]["covered_elements"] == 90
+    assert document.report["layout"]["coverage_complete"]
+    assert not any(issue["code"] in ("coverage_missing", "feature_limit") for issue in document.report["issues"])
+
+
 def test_real_liblouis_translation_and_physical_dot_dimensions():
     translator = BrailleTranslator("en-ueb-g1.ctb")
     assert translator.translate("Map") == "⠠⠍⠁⠏"
@@ -111,10 +228,12 @@ def test_colliding_symbols_block_production_but_leave_draft_available():
             exporter.render(rep)
 
 
-def test_long_labels_use_braille_keys_and_preserve_separate_key_pages():
+def test_numbered_braille_keys_preserve_separate_key_pages():
     rep = map_representation()
     rep.elements[1].label = "Oak Town Northern Educational District"
     rep.export_settings.page_height_mm = 200
+    rep.export_settings.key_position = "before"
+    rep.export_settings.label_mode = "numbered"
     document = prepare_document(rep)
     assert document.report["automated_checks_passed"], document.report["issues"]
     assert [page.role for page in document.pages] == ["key-1", "map"]
@@ -122,7 +241,8 @@ def test_long_labels_use_braille_keys_and_preserve_separate_key_pages():
     label = document.report["labels"][0]
     assert 2 <= len(label["braille"]) <= 3
     assert any((ord(cell) - 0x2800) & 0b100100 for cell in label["braille"])
-    assert label["key"].startswith("o")
+    assert label["key"] == "1"
+    assert label["braille"].startswith("⠼")
     pdf = PdfReader(BytesIO(exporters["pdf"].render(rep)))
     assert len(pdf.pages) == 2
     with ZipFile(BytesIO(exporters["bundle"].render(rep))) as archive:

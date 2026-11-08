@@ -172,26 +172,6 @@ def key_entries(features: list[Feature], translator: BrailleTranslator, columns:
     return sorted(entries.values(), key=lambda entry: (order[entry.kind], entry.name))
 
 
-def assign_key(text: str, used: dict[str, str], translator: BrailleTranslator) -> tuple[str, str]:
-    normalized = " ".join(text.casefold().split())
-    if normalized in used:
-        key = used[normalized]
-        return key, translator.translate(key, "en-ueb-g1.ctb")
-    letters = "".join(character for character in normalized if "a" <= character <= "z")
-    initial = letters[0] if letters else "x"
-    suffixes = "".join(dict.fromkeys(letters[1:] + "abcdefghijklmnopqrstuvwxyz"))
-    candidates = [initial + letter for letter in suffixes]
-    candidates += [initial + a + b for a in "abcdefghijklmnopqrstuvwxyz" for b in "abcdefghijklmnopqrstuvwxyz"]
-    for key in candidates:
-        if key in used.values():
-            continue
-        cells = translator.translate(key, "en-ueb-g1.ctb")
-        if 2 <= len(cells) <= 3 and any((ord(cell) - 0x2800) & 0b100100 for cell in cells):
-            used[normalized] = key
-            return key, cells
-    raise BrailleError("Unable to assign an unambiguous alphabetic braille key.")
-
-
 def try_place(feature: Feature, cells: str, obstacles: list[Feature], placed: list[PlacedLabel], frame: BaseGeometry, gap: float) -> BaseGeometry | None:
     width = braille_width(cells)
     height = CELL_HEIGHT_MM
@@ -215,6 +195,10 @@ def try_place(feature: Feature, cells: str, obstacles: list[Feature], placed: li
                 dx, dy = math.cos(math.radians(angle)), math.sin(math.radians(angle))
                 proposals.append((point.x + dx * (gap + width / 2) - width / 2, point.y + dy * (gap + height / 2) - height / 2))
     for x, y in proposals:
+        if width <= frame.bounds[2] - frame.bounds[0]:
+            x = max(frame.bounds[0], min(x, frame.bounds[2] - width))
+        if height <= frame.bounds[3] - frame.bounds[1]:
+            y = max(frame.bounds[1], min(y, frame.bounds[3] - height))
         candidate = box(x, y, x + width, y + height)
         if not frame.covers(candidate):
             continue
@@ -250,20 +234,22 @@ def draw_key(entries: list[KeyEntry], translator: BrailleTranslator, x: float, y
             content.append(f'<path d="M{x} {center_y}h25.4" fill="none" {stroke_attributes(entry.pattern)}/>')
         elif entry.kind == "point":
             content.append(point_svg(x + 2 * CELL_PITCH_MM, cursor + SYMBOL_DIAMETER_MM / 2, entry.pattern))
-        elif entry.kind == "alphabetic":
+        elif entry.kind in ("alphabetic", "numeric"):
             content.append(draw_braille(translator.translate(entry.key, "en-ueb-g1.ctb"), x, cursor, entry.key))
         for line_index, line in enumerate(entry.lines):
-            start_cell = (len(entry.key) + 1 if line_index == 0 else 2) if entry.kind == "alphabetic" else (5 if line_index == 0 else 7)
+            key_cells = translator.translate(entry.key, "en-ueb-g1.ctb") if entry.key else ""
+            start_cell = (len(key_cells) + 1 if line_index == 0 else 2) if entry.kind in ("alphabetic", "numeric") else (5 if line_index == 0 else 7)
             content.append(draw_braille(line, x + start_cell * CELL_PITCH_MM, cursor + line_index * LINE_PITCH_MM, entry.name, translator.table))
         cursor += entry.height
     content.append(draw_braille(CLOSE_NOTE, x, cursor, "End of key", translator.table))
     return "".join(content), cursor + 2 * LINE_PITCH_MM
 
 
-def prepare_document(rep: Representation) -> TactileDocument:
+def prepare_single_document(rep: Representation, translator: BrailleTranslator | None = None, viewport: tuple[float, float, float, float] | None = None, number_keys: dict[str, str] | None = None) -> TactileDocument:
     output = rep.export_settings
     issues: list[Issue] = []
-    translator = BrailleTranslator(output.braille_table)
+    translator = translator or BrailleTranslator(output.braille_table)
+    number_keys = number_keys or {element.id: str(index + 1) for index, element in enumerate(sorted((element for element in rep.elements if element.label), key=lambda element: element.id))}
     width, height = output.page_width_mm, output.page_height_mm
     columns = min(40, math.floor((width - 2 * MARGIN_MM + 1e-7) / CELL_PITCH_MM))
     rows = min(25, math.floor((height - 2 * MARGIN_MM + 1e-7) / LINE_PITCH_MM))
@@ -280,6 +266,14 @@ def prepare_document(rep: Representation) -> TactileDocument:
     title_height = max(1, len(title_lines)) * LINE_PITCH_MM + LINE_PITCH_MM
     title = "".join(draw_braille(line, MARGIN_MM + (content_width - braille_width(line)) / 2, MARGIN_MM + index * LINE_PITCH_MM, output.tactile_title, translator.table) for index, line in enumerate(title_lines))
     visible = [element for element in rep.elements if element.visible]
+    identities: set[str] = set()
+    duplicates: set[str] = set()
+    for element in visible:
+        if element.id in identities:
+            duplicates.add(element.id)
+        identities.add(element.id)
+    if duplicates:
+        issues.append(Issue("duplicate_element_ids", "2.8", "Some source elements share an identifier. Reanalyze the source before exporting numbered references.", sorted(duplicates)))
     if not visible:
         issues.append(Issue("empty_map", "1.3, 2.8", "No visible map features remain."))
     if len(visible) > MAX_FEATURES:
@@ -295,12 +289,21 @@ def prepare_document(rep: Representation) -> TactileDocument:
             issues.append(Issue("invalid_geometry", "2.8, 10.2", "The feature has invalid geometry. Correct or hide it before production export.", [element.id]))
     pixel_geometries = [affinity.scale(geometry, rep.source.width, rep.source.height, origin=(0, 0)) for _, geometry in raw]
     bounds = unary_union(pixel_geometries).bounds if pixel_geometries else (0, 0, 1, 1)
+    if viewport is not None:
+        bounds = (viewport[0] * rep.source.width, viewport[1] * rep.source.height, viewport[2] * rep.source.width, viewport[3] * rep.source.height)
     label_count = sum(bool(element.label) for element, _ in raw)
     categories = {(element.category, element.geometry.type) for element, _ in raw if element.category != "labels"}
     estimated_key_height = (4 + len(categories) * 2 + label_count * 2) * LINE_PITCH_MM
+    try:
+        category_rows = sum(2 if category == "regions" and geometry_type == "polygon" else 1 for category, geometry_type in categories)
+        name_rows = sum(len(wrap_braille(translator.translate(element.label), max(columns - len(translator.translate(number_keys[element.id], "en-ueb-g1.ctb")) - 1, 1))) for element, _ in raw if element.label) if output.label_mode != "full" else 0
+        estimated_key_height = (5 + category_rows + name_rows) * LINE_PITCH_MM
+    except BrailleError:
+        pass
     inline_key = output.legend and content_height - title_height - estimated_key_height >= 100
-    map_top = MARGIN_MM + title_height + (estimated_key_height if inline_key else 0)
-    frame_values = (MARGIN_MM, map_top, content_width, max(20, MARGIN_MM + content_height - map_top))
+    map_top = MARGIN_MM + title_height + (estimated_key_height if inline_key and output.key_position == "before" else 0)
+    map_height = content_height - title_height - (estimated_key_height if inline_key else 0)
+    frame_values = (MARGIN_MM, map_top, content_width, max(20, map_height))
     frame = box(frame_values[0], frame_values[1], frame_values[0] + frame_values[2], frame_values[1] + frame_values[3])
     features: list[Feature] = []
     for element, geometry in raw:
@@ -340,8 +343,7 @@ def prepare_document(rep: Representation) -> TactileDocument:
             if len(issues) >= 80:
                 break
     labels: list[PlacedLabel] = []
-    used_keys: dict[str, str] = {}
-    alphabetic_entries: dict[str, KeyEntry] = {}
+    numeric_entries: dict[str, KeyEntry] = {}
     try:
         entries = key_entries(features, translator, max(columns, 12))
     except BrailleError as error:
@@ -353,11 +355,12 @@ def prepare_document(rep: Representation) -> TactileDocument:
             continue
         try:
             cells = translator.translate(text)
-            placement = try_place(feature, cells, features, labels, frame, gap)
+            placement = try_place(feature, cells, features, labels, frame, gap) if output.label_mode != "numbered" else None
             keyed = False
             key = ""
-            if placement is None:
-                key, cells = assign_key(text, used_keys, translator)
+            if placement is None and output.label_mode != "full":
+                key = number_keys[feature.element.id]
+                cells = translator.translate(key, "en-ueb-g1.ctb")
                 placement = try_place(feature, cells, features, labels, frame, gap)
                 keyed = True
             if placement is None:
@@ -366,13 +369,15 @@ def prepare_document(rep: Representation) -> TactileDocument:
             labels.append(PlacedLabel(feature.element.id, text, cells, placement, keyed, key))
             if keyed:
                 explanation = translator.translate(text)
-                lines = wrap_braille(explanation, max(columns - len(key) - 1, 1))
-                alphabetic_entries[key] = KeyEntry("alphabetic", text, explanation, key=key, lines=lines, height=len(lines) * LINE_PITCH_MM)
+                lines = wrap_braille(explanation, max(columns - len(cells) - 1, 1))
+                numeric_entries[key] = KeyEntry("numeric", text, explanation, key=key, lines=lines, height=len(lines) * LINE_PITCH_MM)
         except BrailleError as error:
             issues.append(Issue("label_translation", "2.3, 5.8, 5.10", str(error), [feature.element.id]))
-    entries += [alphabetic_entries[key] for key in sorted(alphabetic_entries)]
+    entries += [numeric_entries[key] for key in sorted(numeric_entries, key=int)]
     if entries and not output.legend:
         issues.append(Issue("key_required", "5.7, 5.8", "The key must be enabled for BANA production output."))
+    if entries and output.legend and output.key_position == "below":
+        issues.append(Issue("key_placement_review", "5.8.3", "The key is placed below or after the map as selected. BANA prescribes the key before the graphic; choose Before map (BANA) for that production order.", severity="review"))
     for kind in ("area", "line", "point"):
         if len({feature.pattern for feature in features if feature.kind == kind}) > 5:
             issues.append(Issue("too_many_symbol_styles", "7.3.11", "More than five styles require separation into simpler maps."))
@@ -399,13 +404,18 @@ def prepare_document(rep: Representation) -> TactileDocument:
         x, y, _, _ = label.bounds.bounds
         map_content.append(draw_braille(label.cells, x, y, label.text, "en-ueb-g1.ctb" if label.keyed else translator.table))
     pages: list[Page] = []
+    key_top: float | None = None
     if output.legend and entries:
         if inline_key:
-            key_svg, key_end = draw_key(entries, translator, MARGIN_MM, MARGIN_MM + title_height, max(columns, 12))
-            if key_end > map_top - LINE_PITCH_MM + 1e-4:
+            key_top = map_top + map_height + LINE_PITCH_MM if output.key_position == "below" else MARGIN_MM + title_height
+            key_svg, key_end = draw_key(entries, translator, MARGIN_MM, key_top, max(columns, 12))
+            key_limit = MARGIN_MM + content_height if output.key_position == "below" else map_top - LINE_PITCH_MM
+            if key_end > key_limit + 1e-4:
                 issues.append(Issue("key_overflow", "5.8.3, 5.8.4", "The same-page key exceeds its reserved space. Reduce detail or enlarge the page."))
             map_content.append(key_svg)
         else:
+            if output.key_position == "below" and numeric_entries:
+                issues.append(Issue("key_continues_on_page", "5.8.3", "The full key needs a separate page for this view. It follows the map; use fewer elements per view or allow more views to keep the key below the graphic on one page.", severity="review"))
             capacity = max(LINE_PITCH_MM, content_height - title_height - 4 * LINE_PITCH_MM)
             batches: list[list[KeyEntry]] = [[]]
             consumed = 0.0
@@ -423,11 +433,11 @@ def prepare_document(rep: Representation) -> TactileDocument:
                 key_svg, key_end = draw_key(batch, translator, MARGIN_MM, MARGIN_MM + title_height, max(columns, 12))
                 if key_end > MARGIN_MM + content_height:
                     issues.append(Issue("key_bounds", "3.4.2, 5.8.4", "A key page exceeds the braille page grid."))
-                pages.append(Page(f"key-{index + 1}", svg_page(rep, title + key_svg, "Key", "Braille key. Arrange facing the associated map according to the validation report."), "left" if len(batches) == 1 else "right"))
+                pages.append(Page(f"key-{index + 1}", svg_page(rep, title + key_svg, "Key", "Braille key. Arrange facing the associated map according to the validation report."), "left" if len(batches) == 1 and output.key_position == "before" else "right"))
     visible_categories = sorted({feature.element.category for feature in features})
     description = f"Visible map categories: {', '.join(visible_categories)}. {len(labels)} braille labels. Source interpretation: {rep.description}"
-    map_page = Page("map", svg_page(rep, "".join(map_content), "Map", description), "right" if len(pages) == 1 else "left" if len(pages) > 1 else "either")
-    if len(pages) > 1:
+    map_page = Page("map", svg_page(rep, "".join(map_content), "Map", description), "left" if pages and output.key_position == "below" else "right" if len(pages) == 1 else "left" if len(pages) > 1 else "either")
+    if len(pages) > 1 or output.key_position == "below" and pages:
         pages.insert(0, map_page)
         map_index = 0
     else:
@@ -451,7 +461,18 @@ def prepare_document(rep: Representation) -> TactileDocument:
         "manual_checks": MANUAL_CHECKS,
         "pages": [{"index": index, "role": page.role, "recommended_side": page.recommended_side} for index, page in enumerate(pages)],
         "map_page_index": map_index,
+        "map_frame_mm": list(frame_values),
+        "source_bounds": list(viewport) if viewport is not None else [bounds[0] / rep.source.width, bounds[1] / rep.source.height, bounds[2] / rep.source.width, bounds[3] / rep.source.height],
+        "key_position": output.key_position,
+        "key_inline": inline_key and bool(entries),
+        "key_top_mm": key_top,
+        "rendered_element_ids": sorted({feature.element.id for feature in features if feature.kind != "label" and not feature.geometry.is_empty} | {label.element_id for label in labels}),
         "labels": [{"element_id": label.element_id, "text": label.text, "braille": label.cells, "key": label.key, "bounds_mm": list(label.bounds.bounds)} for label in labels],
         "print_instructions": "Print at 100% actual size without fit-to-page. Key and map must be assembled on the facing sides specified in pages. For multiple key pages, use map-left/key-right pairs, adding blank reverse pages as needed. Confirm braille height, material, orientation, source accuracy, and reader suitability on a physical proof.",
     }
     return TactileDocument(pages, map_index, report)
+
+
+def prepare_document(rep: Representation) -> TactileDocument:
+    from app.exporters.pagination import prepare_adaptive_document
+    return prepare_adaptive_document(rep)
