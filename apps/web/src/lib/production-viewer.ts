@@ -5,6 +5,8 @@ export function createViewer(host: HTMLElement, data: ProductionScene) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(0x808080, 0.08);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const canvas = renderer.domElement;
   canvas.setAttribute('aria-label', '3D tactile map. Drag to rotate, pinch or scroll to zoom. Use arrow keys to rotate, plus or minus to zoom, Home to reset.');
   canvas.tabIndex = 0;
@@ -15,13 +17,25 @@ export function createViewer(host: HTMLElement, data: ProductionScene) {
   camera.up.set(0, 0, 1);
   const group = new THREE.Group();
   scene.add(group);
-  scene.add(new THREE.AmbientLight(0xffffff, 1.1));
-  const light = new THREE.DirectionalLight(0xffffff, 3);
-  light.position.set(-200, -200, 150);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const light = new THREE.DirectionalLight(0xffffff, 2);
+  const span = Math.max(data.width_mm, data.height_mm);
+  light.position.set(-span, -span, span * 0.6);
+  light.castShadow = true;
+  light.shadow.mapSize.set(2048, 2048);
+  light.shadow.camera.left = -span;
+  light.shadow.camera.right = span;
+  light.shadow.camera.top = span;
+  light.shadow.camera.bottom = -span;
+  light.shadow.camera.near = 1;
+  light.shadow.camera.far = span * 6;
+  light.shadow.bias = -0.00002;
+  light.shadow.normalBias = 0.02;
   scene.add(light);
   const material = new THREE.MeshStandardMaterial({ color: data.mode === 'print' ? 0xb8b8b8 : 0xf2eee6, roughness: 0.88, metalness: 0 });
   const width = data.width_mm, height = data.height_mm;
   const plate = new THREE.Mesh(new THREE.BoxGeometry(width, height, data.base_thickness_mm), material);
+  plate.receiveShadow = true;
   plate.position.z = -data.base_thickness_mm / 2;
   group.add(plate);
   const convert = (ring: number[][]) => ring.map(point => new THREE.Vector2(point[0] - width / 2, height / 2 - point[1]));
@@ -31,13 +45,18 @@ export function createViewer(host: HTMLElement, data: ProductionScene) {
       const shape = new THREE.Shape(convert(rings[0]));
       for (const ring of rings.slice(1)) shape.holes.push(new THREE.Path(convert(ring)));
       const geometry = new THREE.ExtrudeGeometry(shape, { depth: data.relief_height_mm, bevelEnabled: false, steps: 1, curveSegments: 6 });
-      group.add(new THREE.Mesh(geometry, material));
+      const feature = new THREE.Mesh(geometry, material);
+      feature.castShadow = true;
+      feature.receiveShadow = true;
+      group.add(feature);
     }
   }
   const dotGeometry = new THREE.SphereGeometry(1, 12, 8);
   const addDots = (dots: number[][], elevation: number) => {
     if (!dots.length) return;
     const mesh = new THREE.InstancedMesh(dotGeometry, material, dots.length);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     const transform = new THREE.Object3D();
     dots.forEach(([x, y, radius], index) => {
       transform.position.set(x - width / 2, height / 2 - y, 0);
@@ -86,5 +105,5 @@ export function createViewer(host: HTMLElement, data: ProductionScene) {
   };
   canvas.addEventListener('pointerdown', down); canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up); canvas.addEventListener('wheel', wheel, { passive: false }); canvas.addEventListener('keydown', key);
   resize();
-  return { zoom, reset, rotate, light: (value: number) => { light.position.set(Math.cos(value) * 250, Math.sin(value) * 250, 100); render(); }, dispose: () => { observer.disconnect(); canvas.removeEventListener('pointerdown', down); canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', up); canvas.removeEventListener('wheel', wheel); canvas.removeEventListener('keydown', key); scene.traverse(object => { if (object instanceof THREE.Mesh) object.geometry.dispose(); }); material.dispose(); renderer.dispose(); canvas.remove(); } };
+  return { zoom, reset, rotate, light: (value: number) => { light.position.set(Math.cos(value) * span, Math.sin(value) * span, span * 0.6); render(); }, dispose: () => { observer.disconnect(); canvas.removeEventListener('pointerdown', down); canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', up); canvas.removeEventListener('wheel', wheel); canvas.removeEventListener('keydown', key); scene.traverse(object => { if (object instanceof THREE.Mesh) object.geometry.dispose(); }); material.dispose(); light.shadow.dispose(); renderer.dispose(); renderer.forceContextLoss(); canvas.remove(); } };
 }
