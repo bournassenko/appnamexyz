@@ -1,7 +1,7 @@
 {$APP_HOST} {
     encode zstd gzip
     request_body {
-        max_size 13MB
+        max_size 1025MiB
     }
     header {
         X-Content-Type-Options nosniff

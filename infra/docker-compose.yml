@@ -18,6 +18,7 @@ services:
     env_file: ${APP_ENV_FILE:-../.env}
     environment:
       STORAGE_PATH: /data
+      MAX_UPLOAD_MB: 1024
       RELEASE_TAG: ${RELEASE_TAG:-current}
     volumes: ["runtime:/data"]
     mem_limit: 1100m

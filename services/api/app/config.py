@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     storage_path: Path = Path("runtime")
     session_hours: int = 12
-    max_upload_mb: int = 12
+    max_upload_mb: int = 1024
     max_projects: int = 80
     max_concurrent_jobs: int = 2
     openai_api_key: str = ""

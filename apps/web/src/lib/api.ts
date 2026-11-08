@@ -4,7 +4,8 @@ export const diagnostics: { method: string; path: string; status: number; durati
 export function resource(path: string): string { return `${apiBase}${path}`; }
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const start = performance.now();
-  const response = await fetch(resource(`/api/v1${path}`), { ...options, headers: options.body instanceof FormData ? options.headers : { 'Content-Type': 'application/json', ...options.headers }, signal: AbortSignal.timeout(30000) });
+  const uploading = options.body instanceof FormData;
+  const response = await fetch(resource(`/api/v1${path}`), { ...options, headers: uploading ? options.headers : { 'Content-Type': 'application/json', ...options.headers }, signal: AbortSignal.timeout(uploading ? 1800000 : 30000) });
   diagnostics.unshift({ method: options.method || 'GET', path, status: response.status, duration: Math.round(performance.now() - start) });
   diagnostics.splice(40);
   const data = await response.json();

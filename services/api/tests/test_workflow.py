@@ -99,6 +99,25 @@ def test_upload_validation_and_project_isolation(client):
     assert client.get("/api/v1/engines").json()[1]["available"] is False
 
 
+def test_upload_above_previous_limit_preserves_original(client):
+    content = image_bytes() + bytes(13 * 1024 * 1024)
+    response = client.post("/api/v1/projects", files={"file": ("large.png", content, "image/png")})
+    assert response.status_code == 201, response.text
+    assert client.get("/api/v1/status").json()["max_upload_mb"] == 1024
+    assert client.get(f"/api/v1/projects/{response.json()['id']}/source").content == content
+
+
+def test_one_gib_upload_boundary_without_allocating_in_memory(client, tmp_path):
+    import app.main as module
+    from starlette.datastructures import UploadFile
+    from fastapi import HTTPException
+    with (tmp_path / "oversized-upload").open("wb+") as file:
+        file.truncate(1024 ** 3 + 1)
+        with pytest.raises(HTTPException) as error:
+            module.store_upload(UploadFile(file=file, filename="oversized.png"))
+        assert error.value.status_code == 413
+
+
 def test_bana_output_updates_validation_and_export_gate_without_ai(client):
     import app.main as module
     from test_tactile import map_representation

@@ -1,9 +1,9 @@
 import asyncio
 import json
 import logging
+import shutil
 import time
 from contextlib import asynccontextmanager
-from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -155,17 +155,30 @@ async def upload(file: UploadFile = File(...)):
     storage.cleanup(active_projects)
     if len([p for p in settings.storage_path.iterdir() if p.is_dir()]) >= settings.max_projects:
         raise HTTPException(503, "Temporary storage is full. Try again after existing sessions expire.")
-    data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
-    if len(data) > settings.max_upload_mb * 1024 * 1024:
+    if file.size is not None and file.size > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"Upload an image smaller than {settings.max_upload_mb} MB.")
+    async with semaphore:
+        return await asyncio.to_thread(store_upload, file)
+
+
+def store_upload(file: UploadFile) -> dict:
+    source_file = file.file
+    source_file.seek(0, 2)
+    size = source_file.tell()
+    source_file.seek(0)
+    if size > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"Upload an image no larger than {settings.max_upload_mb} MB.")
+    if shutil.disk_usage(settings.storage_path).free < size + 128 * 1024 * 1024:
+        raise HTTPException(507, "Temporary storage has insufficient free space for this upload.")
     try:
-        original = Image.open(BytesIO(data))
+        original = Image.open(source_file)
         if original.format not in ("PNG", "JPEG", "WEBP"):
             raise ValueError("Unsupported image format")
         if original.width * original.height > Image.MAX_IMAGE_PIXELS:
             raise ValueError("Image exceeds the pixel limit")
         original.verify()
-        image = ImageOps.exif_transpose(Image.open(BytesIO(data))).convert("RGB")
+        source_file.seek(0)
+        image = ImageOps.exif_transpose(Image.open(source_file)).convert("RGB")
         if image.width < 32 or image.height < 32:
             raise ValueError("Image is too small")
         image.thumbnail((1800, 1800))
@@ -174,8 +187,14 @@ async def upload(file: UploadFile = File(...)):
     project_id = str(uuid4())
     path = storage.project_path(project_id)
     path.mkdir()
-    (path / "original").write_bytes(data)
-    image.save(path / "input.png")
+    try:
+        source_file.seek(0)
+        with (path / "original").open("wb") as destination:
+            shutil.copyfileobj(source_file, destination, length=1024 * 1024)
+        image.save(path / "input.png")
+    except OSError as error:
+        shutil.rmtree(path)
+        raise HTTPException(507, "The upload could not be stored. Try again after temporary sessions expire.") from error
     source = Source(filename=Path(file.filename or "map").name[:160], width=image.width, height=image.height, mime_type=Image.MIME.get(original.format, "application/octet-stream"))
     meta = {"id": project_id, "created_at": time.time(), "source": source.model_dump(), "config": ProjectConfig().model_dump(), "revision": -1, "latest_revision": -1}
     storage.write(project_id, "project.json", meta)
