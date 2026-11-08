@@ -13,5 +13,5 @@
 </svg>
 
 <style>
-  .map-stack{width:96px;height:108px;flex-shrink:0;color:var(--muted)}
+  .map-stack{display:block;width:96px;height:108px;flex-shrink:0;color:var(--muted)}
 </style>
