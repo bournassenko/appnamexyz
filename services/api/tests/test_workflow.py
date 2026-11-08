@@ -127,6 +127,9 @@ def test_bana_output_updates_validation_and_export_gate_without_ai(client):
     rep.project_id = project_id
     module.save_revision(project_id, rep)
     assert client.get(f"/api/v1/projects/{project_id}/validation").json()["automated_checks_passed"]
+    english = client.get(f"/api/v1/projects/{project_id}/preview?english=true")
+    assert english.status_code == 200
+    assert ElementTree.fromstring(english.content).attrib["data-preview"] == "english"
     result = client.post(f"/api/v1/projects/{project_id}/exports/bundle")
     assert result.status_code == 200, result.text
     assert client.get(result.json()["url"]).status_code == 200

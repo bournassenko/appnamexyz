@@ -6,6 +6,7 @@ import zipfile
 from pypdf import PdfReader, PdfWriter
 from PIL import Image
 from app.exporters.tactile import TactileValidationError, prepare_document
+from app.exporters.english_preview import render_english_preview
 import cairosvg
 from app.schemas import Representation
 
@@ -64,13 +65,14 @@ class Exporter:
 exporters = {e.id: e for e in [Exporter("bundle", "BANA production bundle", "application/zip", "zip", ("vector", "braille", "validation-report", "all-pages")), Exporter("svg", "Editable SVG", "image/svg+xml", "svg", ("vector", "text", "tactile-oriented")), Exporter("pdf", "Print PDF", "application/pdf", "pdf", ("vector", "print")), Exporter("png", "PNG image", "image/png", "png", ("raster", "preview"))]}
 
 
-def render_svg(rep: Representation, page: int | None = None) -> str:
+def render_svg(rep: Representation, page: int | None = None, english: bool = False) -> str:
     if rep.export_settings.profile == "bana2022":
         document = prepare_document(rep)
         selected = document.map_index if page is None else page
         if not 0 <= selected < len(document.pages):
             raise ValueError("Preview page does not exist.")
-        return document.pages[selected].svg
+        svg = document.pages[selected].svg
+        return render_english_preview(svg) if english else svg
     output = rep.export_settings
     width, height = output.page_width_mm, output.page_height_mm
     canvas_width = 900

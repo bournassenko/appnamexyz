@@ -8,6 +8,7 @@ from PIL import Image
 from shapely.geometry import box
 from app.exporters.braille import BrailleTranslator, BrailleError, draw_braille
 from app.exporters.render import exporters
+from app.exporters.english_preview import back_translate, render_english_preview
 from app.exporters.tactile import TactileValidationError, prepare_document
 from app.schemas import Element, Geometry, Representation, Source
 from app.storage.local import LocalTemporaryStorageProvider
@@ -30,6 +31,34 @@ def test_real_liblouis_translation_and_physical_dot_dimensions():
     assert float(dots[0].attrib["r"]) * 2 == pytest.approx(1.4478, abs=0.0001)
     assert float(dots[1].attrib["cy"]) - float(dots[0].attrib["cy"]) == pytest.approx(2.3368, abs=0.0001)
     assert float(dots[6].attrib["cx"]) - float(dots[0].attrib["cx"]) == pytest.approx(6.223, abs=0.0001)
+
+
+def test_english_preview_back_translates_real_cells_with_position_mapping():
+    text, runs = back_translate("⠠⠍⠁⠏⠀⠼⠁⠃", "en-ueb-g1.ctb")
+    assert text == "Map 12"
+    assert "".join(run["text"] for run in runs) == text
+    assert runs[0] == {"start": 0, "count": 2, "text": "M"}
+    assert back_translate("⠮", "en-ueb-g2.ctb") == ("the", [{"start": 0, "count": 1, "text": "the"}])
+    assert back_translate("⠈⠨⠜", "en-ueb-g1.ctb") == ("", [])
+
+
+def test_english_preview_uses_braille_instead_of_source_label_and_preserves_map():
+    from app.exporters.render import render_svg
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg">{draw_braille("⠕⠁", 10, 20, "Oak Town")}</svg>'
+    english = ET.fromstring(render_english_preview(svg))
+    group = english.find("{http://www.w3.org/2000/svg}g")
+    assert group.attrib["aria-label"] == "oa"
+    assert "".join(element.text or "" for element in group.findall("{http://www.w3.org/2000/svg}text")) == "oa"
+    assert not group.findall("{http://www.w3.org/2000/svg}circle")
+    rep = map_representation()
+    original = ET.fromstring(render_svg(rep))
+    translated = ET.fromstring(render_svg(rep, english=True))
+    assert translated.attrib["viewBox"] == original.attrib["viewBox"]
+    for element_id in ("border", "city"):
+        selector = f".//{{http://www.w3.org/2000/svg}}g[@id='{element_id}']"
+        assert ET.tostring(original.find(selector)) == ET.tostring(translated.find(selector))
+    assert translated.findall(".//{http://www.w3.org/2000/svg}text")
+    assert not ET.fromstring(exporters["svg"].render(rep)).findall(".//{http://www.w3.org/2000/svg}text")
 
 
 def test_physical_layout_and_actual_multipage_files():

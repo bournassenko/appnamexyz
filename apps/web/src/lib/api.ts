@@ -5,12 +5,26 @@ export function resource(path: string): string { return `${apiBase}${path}`; }
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const start = performance.now();
   const uploading = options.body instanceof FormData;
-  const response = await fetch(resource(`/api/v1${path}`), { ...options, headers: uploading ? options.headers : { 'Content-Type': 'application/json', ...options.headers }, signal: AbortSignal.timeout(uploading ? 1800000 : 30000) });
-  diagnostics.unshift({ method: options.method || 'GET', path, status: response.status, duration: Math.round(performance.now() - start) });
-  diagnostics.splice(40);
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || `Request failed (${response.status}).`);
-  return data as T;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, uploading ? 1800000 : 30000);
+  const cancel = () => controller.abort();
+  if (options.signal?.aborted) cancel();
+  else options.signal?.addEventListener('abort', cancel, { once: true });
+  try {
+    const response = await fetch(resource(`/api/v1${path}`), { ...options, headers: uploading ? options.headers : { 'Content-Type': 'application/json', ...options.headers }, signal: controller.signal });
+    diagnostics.unshift({ method: options.method || 'GET', path, status: response.status, duration: Math.round(performance.now() - start) });
+    diagnostics.splice(40);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || `Request failed (${response.status}).`);
+    return data as T;
+  } catch (error) {
+    if (timedOut) throw new Error('The request timed out. Check your connection and try again.');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', cancel);
+  }
 }
 export interface Geometry { type: string; coordinates: number[][]; parts: number[][][] }
 export interface Element { id: string; category: string; label: string; description: string; visible: boolean; confidence: number; geometry: Geometry; provenance: string }

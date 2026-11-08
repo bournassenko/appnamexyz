@@ -62,8 +62,8 @@ def wrap_braille(cells: str, columns: int) -> list[str]:
     return lines
 
 
-def draw_braille(cells: str, x: float, y: float, accessible_text: str) -> str:
-    parts = [f'<g role="img" aria-label="{escape(accessible_text, quote=True)}"><title>{escape(accessible_text)}</title>']
+def draw_braille(cells: str, x: float, y: float, accessible_text: str, table: str = "en-ueb-g1.ctb") -> str:
+    parts = [f'<g role="img" aria-label="{escape(accessible_text, quote=True)}" data-braille="{cells}" data-braille-x="{x:.5f}" data-braille-y="{y:.5f}" data-braille-table="{table}"><title>{escape(accessible_text)}</title>']
     radius = DOT_DIAMETER_MM / 2
     for index, character in enumerate(cells):
         pattern = ord(character) - 0x2800

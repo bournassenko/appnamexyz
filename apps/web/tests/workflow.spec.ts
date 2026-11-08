@@ -1,6 +1,10 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined }));
+});
+
 test('keyboard settings, advanced configuration, and accessible initial screen', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
@@ -33,6 +37,12 @@ test('upload, analyze, refine, undo, and download a map', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Refine', exact: true })).toBeVisible({ timeout: 190000 });
   await expect(page.getByRole('heading', { name: 'BANA 2022 checks' })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Output profile', exact: true })).toHaveValue('bana2022');
+  await page.getByRole('button', { name: 'Show English', exact: true }).click();
+  await expect(page.locator('.preview-side img').last()).toHaveAttribute('src', /english=true/);
+  await expect(page.locator('.preview-side img').last()).toHaveJSProperty('complete', true);
+  await expect(page.locator('.preview-side img').last()).not.toHaveJSProperty('naturalWidth', 0);
+  await page.getByRole('button', { name: 'Show braille', exact: true }).click();
+  await expect(page.locator('.preview-side img').last()).not.toHaveAttribute('src', /english=true/);
   await page.getByRole('combobox', { name: 'Output profile', exact: true }).selectOption('digital');
   await page.getByRole('button', { name: 'Apply output settings', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'BANA 2022 checks' })).not.toBeVisible();

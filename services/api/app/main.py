@@ -307,9 +307,9 @@ def get_representation(project_id: str):
 
 
 @app.get("/api/v1/projects/{project_id}/preview")
-def preview(project_id: str, page: int | None = None):
+def preview(project_id: str, page: int | None = None, english: bool = False):
     try:
-        svg = render_svg(representation(project_id), page)
+        svg = render_svg(representation(project_id), page, english)
     except ValueError as error:
         raise HTTPException(422, str(error))
     return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})

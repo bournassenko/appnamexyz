@@ -239,7 +239,7 @@ def try_place(feature: Feature, cells: str, obstacles: list[Feature], placed: li
 
 
 def draw_key(entries: list[KeyEntry], translator: BrailleTranslator, x: float, y: float, columns: int) -> tuple[str, float]:
-    content = [draw_braille(OPEN_NOTE + translator.translate("Key:"), x + 6 * CELL_PITCH_MM, y, "Key")]
+    content = [draw_braille(OPEN_NOTE + translator.translate("Key:"), x + 6 * CELL_PITCH_MM, y, "Key", translator.table)]
     cursor = y + 2 * LINE_PITCH_MM
     for index, entry in enumerate(entries):
         if entry.kind == "area":
@@ -254,9 +254,9 @@ def draw_key(entries: list[KeyEntry], translator: BrailleTranslator, x: float, y
             content.append(draw_braille(translator.translate(entry.key, "en-ueb-g1.ctb"), x, cursor, entry.key))
         for line_index, line in enumerate(entry.lines):
             start_cell = (len(entry.key) + 1 if line_index == 0 else 2) if entry.kind == "alphabetic" else (5 if line_index == 0 else 7)
-            content.append(draw_braille(line, x + start_cell * CELL_PITCH_MM, cursor + line_index * LINE_PITCH_MM, entry.name))
+            content.append(draw_braille(line, x + start_cell * CELL_PITCH_MM, cursor + line_index * LINE_PITCH_MM, entry.name, translator.table))
         cursor += entry.height
-    content.append(draw_braille(CLOSE_NOTE, x, cursor, "End of key"))
+    content.append(draw_braille(CLOSE_NOTE, x, cursor, "End of key", translator.table))
     return "".join(content), cursor + 2 * LINE_PITCH_MM
 
 
@@ -278,7 +278,7 @@ def prepare_document(rep: Representation) -> TactileDocument:
     except BrailleError as error:
         issues.append(Issue("braille_translation", "2.3, 3.4.1", str(error)))
     title_height = max(1, len(title_lines)) * LINE_PITCH_MM + LINE_PITCH_MM
-    title = "".join(draw_braille(line, MARGIN_MM + (content_width - braille_width(line)) / 2, MARGIN_MM + index * LINE_PITCH_MM, output.tactile_title) for index, line in enumerate(title_lines))
+    title = "".join(draw_braille(line, MARGIN_MM + (content_width - braille_width(line)) / 2, MARGIN_MM + index * LINE_PITCH_MM, output.tactile_title, translator.table) for index, line in enumerate(title_lines))
     visible = [element for element in rep.elements if element.visible]
     if not visible:
         issues.append(Issue("empty_map", "1.3, 2.8", "No visible map features remain."))
@@ -397,7 +397,7 @@ def prepare_document(rep: Representation) -> TactileDocument:
         map_content.append(f'<g id="{escape(feature.element.id, quote=True)}"><title>{escape(feature.element.label or feature.element.category)}</title>{drawing}</g>')
     for label in labels:
         x, y, _, _ = label.bounds.bounds
-        map_content.append(draw_braille(label.cells, x, y, label.text))
+        map_content.append(draw_braille(label.cells, x, y, label.text, "en-ueb-g1.ctb" if label.keyed else translator.table))
     pages: list[Page] = []
     if output.legend and entries:
         if inline_key:
