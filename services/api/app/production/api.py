@@ -62,8 +62,6 @@ class ProductionManager:
                 job.update(status='running', stage='Building production geometry', progress=15)
                 self.storage().write(project_id, f"production-{job['id']}.json", job)
                 scene = await asyncio.to_thread(build_scene, rep, options)
-                if not scene.document.report['automated_checks_passed']:
-                    raise ValueError('Fix the map layout errors before production export. The 3D preview remains available.')
                 job.update(stage='Generating and validating file', progress=40)
                 self.storage().write(project_id, f"production-{job['id']}.json", job)
                 filename = f"production-{job['id']}.{options.format}"

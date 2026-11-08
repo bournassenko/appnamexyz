@@ -118,6 +118,12 @@ test('mobile accessibility preferences persist and preserve BANA defaults', asyn
 });
 
 test('3D production previews and exports preserve the finished map', async ({ page }) => {
+  await page.route('**/production/preview', async route => {
+    const response = await route.fetch();
+    if (!response.ok()) return route.fulfill({ response });
+    const data = await response.json();
+    await route.fulfill({ response, json: { ...data, layout_passed: false } });
+  });
   await page.goto('/');
   await page.getByRole('button', { name: 'Advanced Mode', exact: true }).click();
   await page.getByRole('combobox', { name: 'Recognition engine', exact: true }).selectOption('opencv');

@@ -85,3 +85,34 @@ def test_production_rejects_unsupported_path_and_profile():
     rep.export_settings.profile = 'digital'
     with pytest.raises(ValueError):
         build_scene(rep, ProductionOptions())
+
+
+@pytest.mark.parametrize(('mode', 'format'), [('print', 'stl'), ('emboss', 'brf'), ('swell', 'png')])
+def test_production_exports_allow_layout_issues(client, monkeypatch, mode, format):
+    import app.main as module
+    import app.production.api as production_api
+    upload = client.post('/api/v1/projects', files={'file': ('map.png', image_bytes(), 'image/png')}).json()
+    identifier = upload['id']
+    rep = map_representation()
+    rep.project_id = identifier
+    module.save_revision(identifier, rep)
+    original = production_api.build_scene
+    def with_layout_issues(rep, options):
+        scene = original(rep, options)
+        scene.document.report['automated_checks_passed'] = False
+        scene.document.report['issues'].append({'severity': 'error', 'message': 'Insufficient tactile spacing'})
+        return scene
+    monkeypatch.setattr(production_api, 'build_scene', with_layout_issues)
+    prefix = f'/api/v1/projects/{identifier}/production'
+    assert client.post(prefix + '/preview', json={'mode': mode}).json()['layout_passed'] is False
+    result = client.post(prefix + '/exports', json={'mode': mode, 'format': format, 'raster_dpi': 150})
+    assert result.status_code == 202
+    job_id = result.json()['id']
+    for _ in range(300):
+        job = client.get(prefix + f'/jobs/{job_id}').json()
+        if job['status'] in ('completed', 'failed'):
+            break
+        time.sleep(0.03)
+    assert job['status'] == 'completed', job
+    response = client.get(prefix + f'/jobs/{job_id}/download')
+    assert response.status_code == 200 and len(response.content) > 20
