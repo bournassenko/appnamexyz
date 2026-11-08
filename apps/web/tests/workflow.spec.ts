@@ -118,6 +118,12 @@ test('mobile accessibility preferences persist and preserve BANA defaults', asyn
 });
 
 test('3D production previews and exports preserve the finished map', async ({ page }) => {
+  await page.route('**/validation', async route => {
+    const response = await route.fetch();
+    if (!response.ok()) return route.fulfill({ response });
+    const data = await response.json();
+    await route.fulfill({ response, json: { ...data, automated_checks_passed: false, issues: [...data.issues, { severity: 'error', rule: 'Spacing', message: 'Overlapping labels', element_ids: [], measured_mm: null, required_mm: null }] } });
+  });
   await page.route('**/production/preview', async route => {
     const response = await route.fetch();
     if (!response.ok()) return route.fulfill({ response });
@@ -132,6 +138,8 @@ test('3D production previews and exports preserve the finished map', async ({ pa
   await page.getByRole('button', { name: 'Analyze & generate', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Refine', exact: true })).toBeVisible({ timeout: 30000 });
   const image = page.locator('.preview-side img').last();
+  for (const format of ['SVG', 'PDF', 'PNG', 'Production ZIP']) await expect(page.getByRole('button', { name: format, exact: true })).toBeEnabled();
+  await expect(page.getByText(/export blocked|fix.*before.*export/i)).toHaveCount(0);
   const original = await image.getAttribute('src');
   const before = await (await page.request.get(original!)).text();
   await page.getByRole('button', { name: '3D preview & production', exact: true }).click();

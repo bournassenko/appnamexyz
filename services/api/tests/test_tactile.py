@@ -9,7 +9,7 @@ from shapely.geometry import box
 from app.exporters.braille import BrailleTranslator, BrailleError, draw_braille
 from app.exporters.render import exporters
 from app.exporters.english_preview import back_translate, render_english_preview
-from app.exporters.tactile import TactileValidationError, prepare_document
+from app.exporters.tactile import prepare_document
 from app.schemas import Element, Geometry, Representation, Source
 from app.storage.local import LocalTemporaryStorageProvider
 
@@ -161,7 +161,7 @@ def test_single_sheet_physical_dimensions_and_actual_exports():
     assert rep.model_dump_json() == original
 
 
-def test_colliding_symbols_block_production_but_leave_draft_available():
+def test_colliding_symbols_allow_all_exports_without_changing_map():
     from app.exporters.render import render_svg
     rep = map_representation()
     rep.elements.append(rep.elements[1].model_copy(update={"id": "overlapping-city"}))
@@ -169,9 +169,20 @@ def test_colliding_symbols_block_production_but_leave_draft_available():
     assert document.report["status"] == "blocked"
     assert any(issue["code"] == "label_clearance" for issue in document.report["issues"])
     assert ET.fromstring(render_svg(rep)).tag.endswith("svg")
-    for exporter in exporters.values():
-        with pytest.raises(TactileValidationError):
-            exporter.render(rep)
+    before = render_svg(rep)
+    for name, exporter in exporters.items():
+        data = exporter.render(rep)
+        if name == 'svg':
+            assert data.decode() == before
+        elif name == 'pdf':
+            assert len(PdfReader(BytesIO(data)).pages) == 1
+        elif name == 'png':
+            with Image.open(BytesIO(data)) as image:
+                image.verify()
+        else:
+            with ZipFile(BytesIO(data)) as archive:
+                assert 'tactile-map.pdf' in archive.namelist()
+    assert render_svg(rep) == before
 
 
 def test_missing_braille_engine_fails_closed(monkeypatch):

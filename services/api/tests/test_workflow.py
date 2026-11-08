@@ -118,7 +118,7 @@ def test_one_gib_upload_boundary_without_allocating_in_memory(client, tmp_path):
         assert error.value.status_code == 413
 
 
-def test_bana_output_updates_validation_and_export_gate_without_ai(client):
+def test_bana_output_updates_validation_without_blocking_exports(client):
     import app.main as module
     from test_tactile import map_representation
     uploaded = client.post("/api/v1/projects", files={"file": ("map.png", image_bytes(), "image/png")}).json()
@@ -138,9 +138,12 @@ def test_bana_output_updates_validation_and_export_gate_without_ai(client):
     output["page_width_mm"] = 100
     assert client.patch(f"/api/v1/projects/{project_id}/output", json=output).status_code == 200
     assert client.get(result.json()["url"]).status_code == 404
-    blocked = client.post(f"/api/v1/projects/{project_id}/exports/pdf")
-    assert blocked.status_code == 422
-    assert blocked.json()["validation"]["status"] == "blocked"
+    assert not client.get(f"/api/v1/projects/{project_id}/validation").json()["automated_checks_passed"]
+    exported = client.post(f"/api/v1/projects/{project_id}/exports/pdf")
+    assert exported.status_code == 200
+    downloaded = client.get(exported.json()["url"])
+    assert downloaded.status_code == 200
+    assert len(PdfReader(BytesIO(downloaded.content)).pages) == 1
     assert client.get(f"/api/v1/projects/{project_id}/preview").status_code == 200
     assert client.post(f"/api/v1/projects/{project_id}/history/undo").status_code == 200
     assert client.get(f"/api/v1/projects/{project_id}/validation").json()["automated_checks_passed"]

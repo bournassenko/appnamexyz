@@ -5,7 +5,7 @@ import json
 import zipfile
 from pypdf import PdfReader, PdfWriter
 from PIL import Image
-from app.exporters.tactile import TactileValidationError, prepare_document
+from app.exporters.tactile import prepare_document
 from app.exporters.english_preview import render_english_preview
 import cairosvg
 from app.schemas import Representation
@@ -23,8 +23,6 @@ class Exporter:
     def render(self, representation: Representation, page: int | None = None) -> bytes:
         if representation.export_settings.profile == "bana2022":
             document = prepare_document(representation)
-            if not document.report["automated_checks_passed"]:
-                raise TactileValidationError(document.report)
             selected = document.map_index if page is None else page
             if not 0 <= selected < len(document.pages):
                 raise ValueError("Export page does not exist.")
